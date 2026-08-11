@@ -12,6 +12,8 @@ import {
   mergePullRequest,
   closeIssue,
   addIssueComment,
+  owner,
+  repo,
   type PullRequestDetail,
 } from "../github.js";
 import { config } from "../config.js";
@@ -108,7 +110,7 @@ export async function handler(input: z.infer<typeof inputSchema>) {
     }
     const prRef = await getOpenPullRequestForBranch(branch, baseTier);
     if (!prRef) {
-      return text(`No open PR found for branch \`${branch}\` into \`${baseTier}\`. Open one with create_pull_request first.`);
+      return text(`No open PR found in \`${owner}/${repo}\` for branch \`${branch}\` into \`${baseTier}\`. Open one with create_pull_request first — and if the PR plainly exists, check that okffs is pointed at the right repository (GITHUB_OWNER/GITHUB_REPO or the origin remote).`);
     }
     prNumber = prRef.number;
   } else {

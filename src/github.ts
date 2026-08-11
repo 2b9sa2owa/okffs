@@ -53,8 +53,10 @@ function resolveOwnerRepo(): { owner?: string; repo?: string } {
 
 const token = resolveToken();
 const resolved = resolveOwnerRepo();
-export const owner = resolved.owner;
-export const repo = resolved.repo;
+// `let`, not `const`: ES-module live bindings mean every importer of
+// owner/repo observes the values canonicalizeRepo() adopts at startup (#273).
+export let owner = resolved.owner;
+export let repo = resolved.repo;
 
 if (!token) {
   throw new Error(
@@ -70,6 +72,35 @@ if (!owner || !repo) {
     "Could not determine the GitHub repository. Quickest fix: run `npx @neturely/okffs setup` in your repo for a guided setup. " +
       "Or run okffs from inside a git repo with a GitHub `origin` remote, or set GITHUB_OWNER and GITHUB_REPO in .env."
   );
+}
+
+/**
+ * Canonicalize owner/repo against the GitHub API (#273). After a repository
+ * transfer (or rename), path-based REST calls keep working — fetch follows the
+ * 301 — which masks the stale name; but anything embedding the owner OUTSIDE
+ * the URL path, like the `head=owner:branch` PR filter, silently matches
+ * nothing. One GET /repos/{owner}/{repo} at startup adopts GitHub's
+ * `full_name`, so every subsequent call uses the canonical owner/repo.
+ * Best-effort: on any failure the resolved values stay and startup proceeds
+ * (a genuinely wrong repo surfaces on first use anyway).
+ */
+export async function canonicalizeRepo(): Promise<void> {
+  try {
+    const data = await request<{ full_name?: string }>(`/repos/${owner}/${repo}`);
+    const [canonOwner, canonRepo] = (data.full_name ?? "").split("/");
+    if (canonOwner && canonRepo && (canonOwner !== owner || canonRepo !== repo)) {
+      console.warn(
+        `[okffs] Repository resolved as ${owner}/${repo} but GitHub reports ${canonOwner}/${canonRepo} (transferred or renamed) — using the canonical name for this session. Update GITHUB_OWNER/GITHUB_REPO (or the origin remote) to silence this.`
+      );
+      owner = canonOwner;
+      repo = canonRepo;
+    }
+  } catch (err) {
+    console.warn(
+      "[okffs] Could not canonicalize owner/repo at startup:",
+      err instanceof Error ? err.message : err
+    );
+  }
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {

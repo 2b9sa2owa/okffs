@@ -47,6 +47,7 @@ import * as setupPrompt from "./prompts/setup.js";
 
 import { parseEnv } from "./cli/env.js";
 import { allKeys } from "./cli/manifest.js";
+import { canonicalizeRepo } from "./github.js";
 
 const tools = [createIssue, listIssues, closeIssue, deleteIssue, deleteBranch, getIssue, commentIssue, createIssuesFromList, plan, linkIssues, createPullRequest, commitAndUpdate, listPrReviewComments, replyToReviewComment, resolveReviewThread, prepareRelease, updateProjectStatus, setIssueFields, updateIssue, promoteBranch, mergePullRequest, fixIntoBase, configure];
 
@@ -145,6 +146,11 @@ function autopilotBanner(): string {
 }
 
 export async function startServer(): Promise<void> {
+  // Adopt GitHub's canonical owner/repo before serving any tool call — after a
+  // repo transfer the stale owner still works in URL paths (301 followed) but
+  // silently breaks query-embedded uses like the head= PR filter (#273).
+  await canonicalizeRepo();
+
   const server = new Server(
     { name: "okffs", version },
     { capabilities: { tools: {}, prompts: {} }, instructions: SERVER_INSTRUCTIONS + upgradeNudge() + autopilotBanner() }
