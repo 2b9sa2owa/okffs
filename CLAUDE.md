@@ -161,7 +161,7 @@ When `OKFFS_IDENTIFIER` is set, a project-scoped prefix is inserted: `{issue-num
 ## Testing
 
 - `npm test` runs the [`node:test`](https://nodejs.org/api/test.html) suite via the existing `tsx` loader (`node --import tsx --test "src/**/*.test.ts"`) — zero extra dependencies. Tests live beside the code they cover as `*.test.ts` and are excluded from the `tsc` build (`tsconfig.json`), so they never emit into `dist/` or ship to npm.
-- Coverage is currently a minimal baseline (started in #253: `parseCommaList` in `src/config.test.ts`). Prefer testing **pure-logic** functions (data transforms, parsing, inference, invariant checks) over the GitHub API-calling layer. Broader coverage is tracked as a follow-up.
+- Coverage is currently a minimal baseline (started in #253: `parseCommaList` in `src/config.test.ts`; #271 added `src/github_errors.test.ts` for the pure error helpers — note `github.ts` itself can't be imported in tests, it resolves token/repo at import time, which is why the pure helpers live in `src/github_errors.ts`). Prefer testing **pure-logic** functions (data transforms, parsing, inference, invariant checks) over the GitHub API-calling layer. Broader coverage is tracked as a follow-up.
 - CI does **not** yet gate on `npm test` — running it is a manual/local step for now.
 
 ## Codebase search
