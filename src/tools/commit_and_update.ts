@@ -87,22 +87,49 @@ export async function handler(input: z.infer<typeof inputSchema>) {
   // shell commands. The caller's original branch is restored afterward.
   const previousBranch = currentBranch();
   let commitHash = "";
+  let idempotentRetry = false;
   try {
     if (branchName && previousBranch !== branchName) {
       git(["checkout", branchName]);
     }
     git(["add", "-A"]);
-    const commitArgs = ["commit", "-m", commitMessage];
-    if (commitBody) {
-      // A second -m yields a native subject + body (blank-line separated),
-      // still passing every arg as an array (no shell).
-      commitArgs.push("-m", commitBody);
+    // Idempotent retry (#269): a clean tree means `git commit` would fail with
+    // "nothing to commit". That's expected when a previous invocation actually
+    // completed server-side (stage+commit+push landed) but the client timed out
+    // and retried. Distinguish that from a genuine no-op call by comparing HEAD
+    // to the remote branch tip: clean tree + HEAD already pushed → treat as
+    // success and still post/refresh the issue comment; clean tree + HEAD not
+    // on the remote → keep a friendly error (nothing was committed or pushed).
+    if (gitOutput(["status", "--porcelain"]) === "") {
+      const head = gitOutput(["rev-parse", "HEAD"]);
+      const remoteRef = branchName
+        ? gitOutput(["ls-remote", "origin", `refs/heads/${branchName}`])
+        : "";
+      const remoteTip = remoteRef.split(/\s+/)[0] ?? "";
+      if (remoteTip && remoteTip === head) {
+        idempotentRetry = true;
+        commitHash = gitOutput(["rev-parse", "--short", "HEAD"]);
+      } else {
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Nothing to commit: the working tree is clean and the latest commit is not on \`origin/${branchName ?? "?"}\`. Make some changes first (or push the branch manually if that was the intent).`,
+          }],
+        };
+      }
+    } else {
+      const commitArgs = ["commit", "-m", commitMessage];
+      if (commitBody) {
+        // A second -m yields a native subject + body (blank-line separated),
+        // still passing every arg as an array (no shell).
+        commitArgs.push("-m", commitBody);
+      }
+      git(commitArgs);
+      if (branchName) {
+        git(["push", "origin", branchName]);
+      }
+      commitHash = gitOutput(["rev-parse", "--short", "HEAD"]);
     }
-    git(commitArgs);
-    if (branchName) {
-      git(["push", "origin", branchName]);
-    }
-    commitHash = gitOutput(["rev-parse", "--short", "HEAD"]);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return {
@@ -128,11 +155,17 @@ export async function handler(input: z.infer<typeof inputSchema>) {
   // so a decide-then-report run leaves an audit trail at each step, not only at PR.
   const decisionsSection = renderAutopilotDecisions(input.autopilot_decisions);
 
+  // On an idempotent retry nothing was committed this call — report the subject
+  // of the commit that actually landed rather than the rebuilt (unused) message.
+  const reportedMessage = idempotentRetry
+    ? gitOutput(["log", "-1", "--pretty=%s", commitHash])
+    : commitMessage;
+
   const comment = [
-    `### 🔧 Commit update`,
+    `### 🔧 Commit update${idempotentRetry ? " (idempotent retry — already committed and pushed)" : ""}`,
     ``,
     `**Commit:** \`${commitHash}\``,
-    `**Message:** ${commitMessage}`,
+    `**Message:** ${reportedMessage}`,
     `**Time:** ${timestamp}`,
     ``,
     `**Files changed:**`,
@@ -144,6 +177,11 @@ export async function handler(input: z.infer<typeof inputSchema>) {
   await addIssueComment(input.issue_number, comment);
 
   return {
-    content: [{ type: "text" as const, text: `Committed \`${commitHash}\` and updated issue #${input.issue_number}.` }],
+    content: [{
+      type: "text" as const,
+      text: idempotentRetry
+        ? `Already committed and pushed as \`${commitHash}\` (idempotent retry) — refreshed issue #${input.issue_number}.`
+        : `Committed \`${commitHash}\` and updated issue #${input.issue_number}.`,
+    }],
   };
 }
