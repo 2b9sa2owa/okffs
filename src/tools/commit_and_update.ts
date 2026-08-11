@@ -62,6 +62,18 @@ export async function handler(input: z.infer<typeof inputSchema>) {
   const issue = await getIssue(input.issue_number);
   const branchName = extractBranchFromBody(issue.body);
 
+  // Without a **Branch:** line there is no issue branch to commit to — carrying
+  // on would commit onto whatever branch happens to be checked out and never
+  // push. Refuse early instead (PR #277 review).
+  if (!branchName) {
+    return {
+      content: [{
+        type: "text" as const,
+        text: `Issue #${input.issue_number} has no associated branch (no **Branch:** line), so there's nothing to commit to. Use create_pull_request with an explicit \`branch\` to backfill the link, or add the **Branch:** line to the issue body.`,
+      }],
+    };
+  }
+
   // Files changed relative to HEAD — used for the commit message and comment.
   let changedFiles: string[] = [];
   try {
@@ -88,6 +100,7 @@ export async function handler(input: z.infer<typeof inputSchema>) {
   const previousBranch = currentBranch();
   let commitHash = "";
   let idempotentRetry = false;
+  let retrySubject = "";
   try {
     if (branchName && previousBranch !== branchName) {
       git(["checkout", branchName]);
@@ -102,18 +115,21 @@ export async function handler(input: z.infer<typeof inputSchema>) {
     // on the remote → keep a friendly error (nothing was committed or pushed).
     if (gitOutput(["status", "--porcelain"]) === "") {
       const head = gitOutput(["rev-parse", "HEAD"]);
-      const remoteRef = branchName
-        ? gitOutput(["ls-remote", "origin", `refs/heads/${branchName}`])
-        : "";
+      const remoteRef = gitOutput(["ls-remote", "origin", `refs/heads/${branchName}`]);
       const remoteTip = remoteRef.split(/\s+/)[0] ?? "";
       if (remoteTip && remoteTip === head) {
         idempotentRetry = true;
         commitHash = gitOutput(["rev-parse", "--short", "HEAD"]);
+        // Capture the landed commit's subject here, keyed by the full hash and
+        // while still on the issue branch — a short hash can turn ambiguous as
+        // history grows, and after `finally` we're back on the caller's branch
+        // (PR #277 review).
+        retrySubject = gitOutput(["log", "-1", "--pretty=%s", head]);
       } else {
         return {
           content: [{
             type: "text" as const,
-            text: `Nothing to commit: the working tree is clean and the latest commit is not on \`origin/${branchName ?? "?"}\`. Make some changes first (or push the branch manually if that was the intent).`,
+            text: `Nothing to commit: the working tree is clean and the latest commit is not on \`origin/${branchName}\`. Make some changes first (or push the branch manually if that was the intent).`,
           }],
         };
       }
@@ -157,9 +173,7 @@ export async function handler(input: z.infer<typeof inputSchema>) {
 
   // On an idempotent retry nothing was committed this call — report the subject
   // of the commit that actually landed rather than the rebuilt (unused) message.
-  const reportedMessage = idempotentRetry
-    ? gitOutput(["log", "-1", "--pretty=%s", commitHash])
-    : commitMessage;
+  const reportedMessage = idempotentRetry ? retrySubject : commitMessage;
 
   const comment = [
     `### 🔧 Commit update${idempotentRetry ? " (idempotent retry — already committed and pushed)" : ""}`,
