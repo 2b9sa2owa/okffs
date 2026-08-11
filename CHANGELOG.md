@@ -5,6 +5,12 @@ See [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-08-11
+### Fixed
+- Stale owner after repo transfer: head= filter silently matches nothing — canonicalize owner/repo at startup + name the… ([#273](https://github.com/neturely/okffs/issues/273))
+- summarizeGitHubError drops the 422 errors[] detail; auto-PR retry predicate misses "Validation Failed" 422s ([#271](https://github.com/neturely/okffs/issues/271))
+- commit_and_update no longer reports a false failure on retry — a clean tree whose HEAD already matches the remote tip is treated as an idempotent success ([#269](https://github.com/neturely/okffs/issues/269))
+
 ## [0.10.1] - 2026-07-16
 ### Changed
 - list_issues board column is cross-repo unsafe — project: reports another repo's status on number collisions ([#257](https://github.com/neturely/okffs/issues/257))
@@ -164,7 +170,8 @@ See [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `create_pull_request` commits the updated CHANGELOG onto the branch and pushes the branch before opening the PR, with non-blocking error handling ([#38](https://github.com/2b9sa2owa/okffs/issues/38)).
 - All git operations now run via `execFileSync` with argument arrays (no shell), removing command-injection risk from branch names and commit hints; tools also checkout the target branch before committing/pushing and restore the original branch afterward.
 
-[Unreleased]: https://github.com/neturely/okffs/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/neturely/okffs/compare/v0.10.2...HEAD
+[0.10.2]: https://github.com/neturely/okffs/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/neturely/okffs/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/neturely/okffs/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/neturely/okffs/compare/v0.8.0...v0.9.0
