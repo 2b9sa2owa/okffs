@@ -6,6 +6,9 @@ See [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ## [0.10.2] - 2026-08-11
+### Changed
+- update_project_status: rename `issue` param to `issue_number` for cross-tool consistency (`issue` stays as a deprecated alias for one release) ([#278](https://github.com/neturely/okffs/issues/278))
+
 ### Fixed
 - Stale owner after repo transfer: head= filter silently matches nothing — canonicalize owner/repo at startup + name the… ([#273](https://github.com/neturely/okffs/issues/273))
 - summarizeGitHubError drops the 422 errors[] detail; auto-PR retry predicate misses "Validation Failed" 422s ([#271](https://github.com/neturely/okffs/issues/271))
