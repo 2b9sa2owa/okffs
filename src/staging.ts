@@ -12,11 +12,18 @@
  *
  *   .env*  *.env  *.pem  *.key  id_rsa*  *credentials*  *.p12  *.pfx
  *
+ * Template/sample files (basename ending .example / .sample / .template, e.g.
+ * this repo's own .env.example) are exempt — they document config, they don't
+ * hold it (PR #289 review).
+ *
  * Returns the subset of `files` that match.
  */
+const TEMPLATE_SUFFIXES = [".example", ".sample", ".template"];
+
 export function matchSecretPaths(files: string[]): string[] {
   return files.filter((file) => {
     const base = (file.split("/").pop() ?? file).toLowerCase();
+    if (TEMPLATE_SUFFIXES.some((s) => base.endsWith(s))) return false;
     return (
       base.startsWith(".env") ||
       base.endsWith(".env") ||

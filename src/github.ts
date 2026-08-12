@@ -362,10 +362,17 @@ export async function upsertIssueCommentByMarker(
   body: string
 ): Promise<{ action: "created" | "updated"; url: string }> {
   const tag = `<!-- okffs:comment:${marker} -->`;
-  const comments = await request<Array<{ id: number; body: string | null; html_url: string }>>(
-    `/repos/${owner}/${repo}/issues/${issueNumber}/comments?per_page=100&sort=created&direction=desc`
-  );
-  const existing = comments.find((c) => c.body?.includes(tag));
+  // Page newest-first until the marker is found or comments run out (bounded at
+  // 10 pages / 1000 comments) — scanning only the newest 100 would duplicate the
+  // marker comment on a busy issue once it aged past page 1 (PR #289 review).
+  let existing: { id: number; body: string | null; html_url: string } | undefined;
+  for (let page = 1; page <= 10; page++) {
+    const comments = await request<Array<{ id: number; body: string | null; html_url: string }>>(
+      `/repos/${owner}/${repo}/issues/${issueNumber}/comments?per_page=100&page=${page}&sort=created&direction=desc`
+    );
+    existing = comments.find((c) => c.body?.includes(tag));
+    if (existing || comments.length < 100) break;
+  }
   const fullBody = `${tag}\n${body}`;
   if (existing) {
     const updated = await request<{ html_url: string }>(

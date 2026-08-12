@@ -30,6 +30,13 @@ test("matchSecretPaths is case-insensitive on the basename", () => {
   ]);
 });
 
+test("matchSecretPaths exempts template/sample files (PR #289 review)", () => {
+  assert.deepEqual(
+    matchSecretPaths([".env.example", ".env.sample", "config/prod.env.template", ".env.bak"]),
+    [".env.bak"]
+  );
+});
+
 test("matchSecretPaths leaves ordinary files alone", () => {
   assert.deepEqual(
     matchSecretPaths(["src/github.ts", "README.md", "environment.md", "keyboard.ts", "envelope.txt"]),
