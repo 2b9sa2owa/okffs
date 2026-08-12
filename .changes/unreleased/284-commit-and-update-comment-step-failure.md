@@ -1,2 +1,0 @@
-<!-- okffs:type=Fixed -->
-- `commit_and_update` no longer surfaces a raw `MCP error -32603: fetch failed`: an issue-lookup failure returns a contextual error, a comment-post failure after the durable commit+push returns success-with-warning carrying the commit hash and branch, and all GitHub fetches now carry a 30s timeout (GETs retried once; writes never) ([#284](https://github.com/neturely/okffs/issues/284))
