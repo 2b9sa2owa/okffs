@@ -353,6 +353,34 @@ export async function addIssueComment(issueNumber: number, body: string): Promis
   });
 }
 
+// Marker-based comment upsert (#267): edit the existing comment carrying the
+// hidden HTML-comment marker, or create it if absent — giving callers a single
+// running status comment per issue instead of an append-only thread.
+export async function upsertIssueCommentByMarker(
+  issueNumber: number,
+  marker: string,
+  body: string
+): Promise<{ action: "created" | "updated"; url: string }> {
+  const tag = `<!-- okffs:comment:${marker} -->`;
+  const comments = await request<Array<{ id: number; body: string | null; html_url: string }>>(
+    `/repos/${owner}/${repo}/issues/${issueNumber}/comments?per_page=100&sort=created&direction=desc`
+  );
+  const existing = comments.find((c) => c.body?.includes(tag));
+  const fullBody = `${tag}\n${body}`;
+  if (existing) {
+    const updated = await request<{ html_url: string }>(
+      `/repos/${owner}/${repo}/issues/comments/${existing.id}`,
+      { method: "PATCH", body: JSON.stringify({ body: fullBody }) }
+    );
+    return { action: "updated", url: updated.html_url };
+  }
+  const created = await request<{ html_url: string }>(
+    `/repos/${owner}/${repo}/issues/${issueNumber}/comments`,
+    { method: "POST", body: JSON.stringify({ body: fullBody }) }
+  );
+  return { action: "created", url: created.html_url };
+}
+
 export async function deleteBranch(branchName: string): Promise<void> {
   await request(`/repos/${owner}/${repo}/git/refs/heads/${branchName}`, {
     method: "DELETE",
