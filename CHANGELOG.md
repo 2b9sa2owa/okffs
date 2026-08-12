@@ -12,6 +12,7 @@ See [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `comment_issue` can upsert: pass a `marker` to edit the existing comment carrying that hidden marker in place (or create it), enabling a single running status comment per issue instead of an append-only thread ([#267](https://github.com/neturely/okffs/issues/267))
 ### Changed
 - `body` is now the canonical issue-body param across `create_issue`, `plan`, and `create_issues_from_list` (matching `update_issue` and GitHub's own field); `description` remains as a deprecated alias for one release — using it warns, passing both errors ([#282](https://github.com/neturely/okffs/issues/282))
+- `message` is now the canonical commit-message param on `commit_and_update` (`hint` stays as a deprecated alias for one release), and unknown parameters like `commit_message` are rejected with an actionable error instead of being silently stripped — a mis-guessed param name previously discarded the caller's message and committed with the auto-generated fallback ([#290](https://github.com/neturely/okffs/issues/290))
 ### Fixed
 - `commit_and_update` no longer surfaces a raw `MCP error -32603: fetch failed`: an issue-lookup failure returns a contextual error, a comment-post failure after the durable commit+push returns success-with-warning carrying the commit hash and branch, and all GitHub fetches now carry a 30s timeout (GETs retried once; writes never) ([#284](https://github.com/neturely/okffs/issues/284))
 
