@@ -104,8 +104,28 @@ export async function canonicalizeRepo(): Promise<void> {
   }
 }
 
+// A hung GitHub fetch otherwise blocks a tool call for minutes before dying as
+// an opaque "fetch failed" (#284). Every request gets a timeout; only reads
+// (GET) are retried once — retrying a failed write could double-apply it
+// (e.g. a duplicate issue comment) when the first attempt actually reached
+// GitHub.
+const FETCH_TIMEOUT_MS = 30_000;
+
+async function timedFetch(url: string, options: RequestInit, retryable: boolean): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetch(url, { ...options, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    } catch (err) {
+      if (retryable && attempt === 0) continue;
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`GitHub request to ${url} failed: ${msg}`);
+    }
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const method = (options.method ?? "GET").toUpperCase();
+  const res = await timedFetch(`${BASE}${path}`, {
     ...options,
     headers: {
       Authorization: `Bearer ${token}`,
@@ -114,7 +134,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       "Content-Type": "application/json",
       ...options.headers,
     },
-  });
+  }, method === "GET");
 
   if (!res.ok) {
     const body = await res.text();
@@ -129,14 +149,15 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export async function graphqlRequest<T>(query: string, variables: Record<string, unknown>): Promise<T> {
-  const res = await fetch(`${BASE}/graphql`, {
+  // GraphQL is always POST, and mutations can't safely be retried — timeout only.
+  const res = await timedFetch(`${BASE}/graphql`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ query, variables }),
-  });
+  }, false);
 
   if (!res.ok) {
     const body = await res.text();
