@@ -11,6 +11,7 @@ import {
   type BoardFieldOutcome,
 } from "../board.js";
 import { applyIssueType } from "../issue_types.js";
+import { resolveIssueBody } from "../issue_body.js";
 
 export const name = "create_issues_from_list";
 
@@ -19,7 +20,10 @@ export const description =
 
 const taskSchema = z.object({
   title: z.string().describe("Issue title"),
-  description: z.string().describe("Issue body / description"),
+  // `body` is the canonical name (#282); `description` is a deprecated alias
+  // for one release (#279 pattern).
+  body: z.string().optional().describe("Issue body"),
+  description: z.string().optional().describe("DEPRECATED alias for body — use body"),
   assignees: z.array(z.string()).optional().describe("GitHub usernames to assign"),
   labels: z.array(z.string()).optional().describe("Labels to apply to this issue"),
   milestone: z.number().int().optional().describe("Milestone number to assign"),
@@ -40,6 +44,26 @@ export const inputSchema = z.object({
 });
 
 export async function handler(input: z.infer<typeof inputSchema>) {
+  // Resolve each task's body up front (#282) so a bad task errors at preview
+  // time, before anything is created.
+  const bodyWarnings: string[] = [];
+  const bodyErrors: string[] = [];
+  const taskBodies: string[] = [];
+  input.tasks.forEach((t, i) => {
+    const res = resolveIssueBody(t, `create_issues_from_list task ${i + 1}`);
+    if (!res.ok) {
+      bodyErrors.push(res.error);
+      taskBodies.push("");
+    } else {
+      if (res.deprecationWarning) bodyWarnings.push(res.deprecationWarning);
+      taskBodies.push(res.body);
+    }
+  });
+  if (bodyErrors.length > 0) {
+    return { content: [{ type: "text" as const, text: bodyErrors.join("\n") }] };
+  }
+  for (const w of bodyWarnings) console.warn(w);
+
   if (!input.confirmed) {
     const preview = input.tasks
       .map((t, i) => `${i + 1}. ${t.title}${t.labels?.length ? ` [${t.labels.join(", ")}]` : ""}`)
@@ -56,7 +80,8 @@ export async function handler(input: z.infer<typeof inputSchema>) {
   const ref = await getRef(defaultBranch);
   const results: string[] = [];
 
-  for (const task of input.tasks) {
+  for (const [taskIndex, task] of input.tasks.entries()) {
+    const taskBody = taskBodies[taskIndex];
     const resolvedAssignees = task.assignees ?? config.defaultAssignees;
     const resolvedLabels = [
       ...new Set([...(task.labels ?? []), ...config.defaultLabels])
@@ -65,10 +90,10 @@ export async function handler(input: z.infer<typeof inputSchema>) {
     const resolvedEffort = task.effort ?? config.defaultEffort;
     const resolvedType = task.type ?? config.defaultType;
 
-    const issue = await createIssue(task.title, task.description, resolvedAssignees, resolvedLabels, task.milestone);
+    const issue = await createIssue(task.title, taskBody, resolvedAssignees, resolvedLabels, task.milestone);
     const branchName = buildBranchName(issue.number, task.title);
     await createBranch(branchName, ref.object.sha);
-    const updatedBody = `${task.description}\n\n**Branch:** \`${branchName}\``;
+    const updatedBody = `${taskBody}\n\n**Branch:** \`${branchName}\``;
     await updateIssueBody(issue.number, updatedBody);
 
     // Native Issue Type — non-fatal per task, surfaced in the entry below.
@@ -122,6 +147,11 @@ export async function handler(input: z.infer<typeof inputSchema>) {
   }
 
   return {
-    content: [{ type: "text" as const, text: `Created ${results.length} issue(s):\n\n${results.join("\n\n")}` }],
+    content: [{
+      type: "text" as const,
+      text:
+        `Created ${results.length} issue(s):\n\n${results.join("\n\n")}` +
+        (bodyWarnings.length > 0 ? `\n\n${[...new Set(bodyWarnings)].join("\n")}` : ""),
+    }],
   };
 }

@@ -5,6 +5,17 @@ See [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-12
+### Security
+- `commit_and_update` no longer silently sweeps untracked files into commits: staging defaults to tracked-modified only (`git add -u`), untracked files require `include_untracked: true`, a secrets deny-list (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `*credentials*`, `*.p12`, `*.pfx`) refuses secret-looking filenames unless overridden, the caller's `hint` is used verbatim as the commit message, and the tool result lists every staged file untruncated with per-file +/- counts ([#265](https://github.com/neturely/okffs/issues/265))
+### Added
+- `comment_issue` can upsert: pass a `marker` to edit the existing comment carrying that hidden marker in place (or create it), enabling a single running status comment per issue instead of an append-only thread ([#267](https://github.com/neturely/okffs/issues/267))
+### Changed
+- `body` is now the canonical issue-body param across `create_issue`, `plan`, and `create_issues_from_list` (matching `update_issue` and GitHub's own field); `description` remains as a deprecated alias for one release — using it warns, passing both errors ([#282](https://github.com/neturely/okffs/issues/282))
+- `message` is now the canonical commit-message param on `commit_and_update` (`hint` stays as a deprecated alias for one release), and unknown parameters like `commit_message` are rejected with an actionable error instead of being silently stripped — a mis-guessed param name previously discarded the caller's message and committed with the auto-generated fallback ([#290](https://github.com/neturely/okffs/issues/290))
+### Fixed
+- `commit_and_update` no longer surfaces a raw `MCP error -32603: fetch failed`: an issue-lookup failure returns a contextual error, a comment-post failure after the durable commit+push returns success-with-warning carrying the commit hash and branch, and all GitHub fetches now carry a 30s timeout (GETs retried once; writes never) ([#284](https://github.com/neturely/okffs/issues/284))
+
 ## [0.10.2] - 2026-08-11
 ### Changed
 - update_project_status: rename `issue` param to `issue_number` for cross-tool consistency (`issue` stays as a deprecated alias for one release) ([#278](https://github.com/neturely/okffs/issues/278))
@@ -173,7 +184,8 @@ See [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `create_pull_request` commits the updated CHANGELOG onto the branch and pushes the branch before opening the PR, with non-blocking error handling ([#38](https://github.com/2b9sa2owa/okffs/issues/38)).
 - All git operations now run via `execFileSync` with argument arrays (no shell), removing command-injection risk from branch names and commit hints; tools also checkout the target branch before committing/pushing and restore the original branch afterward.
 
-[Unreleased]: https://github.com/neturely/okffs/compare/v0.10.2...HEAD
+[Unreleased]: https://github.com/neturely/okffs/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/neturely/okffs/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/neturely/okffs/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/neturely/okffs/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/neturely/okffs/compare/v0.9.0...v0.10.0

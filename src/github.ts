@@ -104,8 +104,28 @@ export async function canonicalizeRepo(): Promise<void> {
   }
 }
 
+// A hung GitHub fetch otherwise blocks a tool call for minutes before dying as
+// an opaque "fetch failed" (#284). Every request gets a timeout; only reads
+// (GET) are retried once — retrying a failed write could double-apply it
+// (e.g. a duplicate issue comment) when the first attempt actually reached
+// GitHub.
+const FETCH_TIMEOUT_MS = 30_000;
+
+async function timedFetch(url: string, options: RequestInit, retryable: boolean): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetch(url, { ...options, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    } catch (err) {
+      if (retryable && attempt === 0) continue;
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`GitHub request to ${url} failed: ${msg}`);
+    }
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const method = (options.method ?? "GET").toUpperCase();
+  const res = await timedFetch(`${BASE}${path}`, {
     ...options,
     headers: {
       Authorization: `Bearer ${token}`,
@@ -114,7 +134,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       "Content-Type": "application/json",
       ...options.headers,
     },
-  });
+  }, method === "GET");
 
   if (!res.ok) {
     const body = await res.text();
@@ -129,14 +149,15 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export async function graphqlRequest<T>(query: string, variables: Record<string, unknown>): Promise<T> {
-  const res = await fetch(`${BASE}/graphql`, {
+  // GraphQL is always POST, and mutations can't safely be retried — timeout only.
+  const res = await timedFetch(`${BASE}/graphql`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ query, variables }),
-  });
+  }, false);
 
   if (!res.ok) {
     const body = await res.text();
@@ -330,6 +351,41 @@ export async function addIssueComment(issueNumber: number, body: string): Promis
     method: "POST",
     body: JSON.stringify({ body }),
   });
+}
+
+// Marker-based comment upsert (#267): edit the existing comment carrying the
+// hidden HTML-comment marker, or create it if absent — giving callers a single
+// running status comment per issue instead of an append-only thread.
+export async function upsertIssueCommentByMarker(
+  issueNumber: number,
+  marker: string,
+  body: string
+): Promise<{ action: "created" | "updated"; url: string }> {
+  const tag = `<!-- okffs:comment:${marker} -->`;
+  // Page newest-first until the marker is found or comments run out (bounded at
+  // 10 pages / 1000 comments) — scanning only the newest 100 would duplicate the
+  // marker comment on a busy issue once it aged past page 1 (PR #289 review).
+  let existing: { id: number; body: string | null; html_url: string } | undefined;
+  for (let page = 1; page <= 10; page++) {
+    const comments = await request<Array<{ id: number; body: string | null; html_url: string }>>(
+      `/repos/${owner}/${repo}/issues/${issueNumber}/comments?per_page=100&page=${page}&sort=created&direction=desc`
+    );
+    existing = comments.find((c) => c.body?.includes(tag));
+    if (existing || comments.length < 100) break;
+  }
+  const fullBody = `${tag}\n${body}`;
+  if (existing) {
+    const updated = await request<{ html_url: string }>(
+      `/repos/${owner}/${repo}/issues/comments/${existing.id}`,
+      { method: "PATCH", body: JSON.stringify({ body: fullBody }) }
+    );
+    return { action: "updated", url: updated.html_url };
+  }
+  const created = await request<{ html_url: string }>(
+    `/repos/${owner}/${repo}/issues/${issueNumber}/comments`,
+    { method: "POST", body: JSON.stringify({ body: fullBody }) }
+  );
+  return { action: "created", url: created.html_url };
 }
 
 export async function deleteBranch(branchName: string): Promise<void> {

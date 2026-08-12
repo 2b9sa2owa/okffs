@@ -14,6 +14,7 @@ import {
 } from "../board.js";
 import { applyIssueType, getIssueTypeNames } from "../issue_types.js";
 import { autopilotEnabled } from "../autopilot.js";
+import { resolveIssueBody } from "../issue_body.js";
 
 export const name = "create_issue";
 
@@ -76,7 +77,10 @@ export async function getDescription(): Promise<string> {
 
 export const inputSchema = z.object({
   title: z.string().describe("Issue title"),
-  description: z.string().describe("Issue body / description"),
+  // `body` is the canonical name (#282), matching update_issue and GitHub's own
+  // field; `description` stays as a deprecated alias for one release (#279 pattern).
+  body: z.string().optional().describe("Issue body"),
+  description: z.string().optional().describe("DEPRECATED alias for body — use body"),
   assignees: z.array(z.string()).optional().describe("GitHub usernames to assign"),
   labels: z.array(z.string()).optional().describe("Labels to apply e.g. bug, feature"),
   milestone: z.number().int().optional().describe("Milestone number to assign"),
@@ -92,6 +96,13 @@ export const inputSchema = z.object({
 });
 
 export async function handler(input: z.infer<typeof inputSchema>) {
+  const bodyRes = resolveIssueBody(input, "create_issue");
+  if (!bodyRes.ok) {
+    return { content: [{ type: "text" as const, text: bodyRes.error }] };
+  }
+  if (bodyRes.deprecationWarning) console.warn(bodyRes.deprecationWarning);
+  const issueBody = bodyRes.body;
+
   const resolvedAssignees = input.assignees ?? config.defaultAssignees;
   const resolvedLabels = [
     ...new Set([...(input.labels ?? []), ...config.defaultLabels])
@@ -102,7 +113,7 @@ export async function handler(input: z.infer<typeof inputSchema>) {
   const resolvedEffort = input.effort ?? config.defaultEffort;
   const resolvedType = input.type ?? config.defaultType;
 
-  const issue = await createIssue(input.title, input.description, resolvedAssignees, resolvedLabels, input.milestone);
+  const issue = await createIssue(input.title, issueBody, resolvedAssignees, resolvedLabels, input.milestone);
 
   const branchName = buildBranchName(issue.number, input.title);
 
@@ -110,7 +121,7 @@ export async function handler(input: z.infer<typeof inputSchema>) {
   const ref = await getRef(defaultBranch);
   await createBranch(branchName, ref.object.sha);
 
-  const updatedBody = `${input.description}\n\n**Branch:** \`${branchName}\``;
+  const updatedBody = `${issueBody}\n\n**Branch:** \`${branchName}\``;
   await updateIssueBody(issue.number, updatedBody);
 
   // Set the native GitHub Issue Type (Task/Bug/Feature/…). Non-fatal, like the
@@ -262,6 +273,10 @@ export async function handler(input: z.infer<typeof inputSchema>) {
       `  labels: ["feature", "bug"]`,
       `Or set OKFFS_PROMPT_METADATA=false in .env to hide this tip.`
     );
+  }
+
+  if (bodyRes.deprecationWarning) {
+    lines.push(``, bodyRes.deprecationWarning);
   }
 
   return {
