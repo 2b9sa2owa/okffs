@@ -1,2 +1,2 @@
-<!-- okffs:type=Added -->
-- commit_and_update: silent add-all staging and discarded commit messages enabled a secrets leak ([#265](https://github.com/neturely/okffs/issues/265))
+<!-- okffs:type=Security -->
+- `commit_and_update` no longer silently sweeps untracked files into commits: staging defaults to tracked-modified only (`git add -u`), untracked files require `include_untracked: true`, a secrets deny-list (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `*credentials*`, `*.p12`, `*.pfx`) refuses secret-looking filenames unless overridden, the caller's `hint` is used verbatim as the commit message, and the tool result lists every staged file untruncated with per-file +/- counts ([#265](https://github.com/neturely/okffs/issues/265))
