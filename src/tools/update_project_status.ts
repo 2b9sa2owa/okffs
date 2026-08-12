@@ -14,7 +14,11 @@ export const description =
 const STATUSES = ["Backlog", "Ready", "In Progress", "Review"] as const;
 
 export const inputSchema = z.object({
-  issue: z.number().int().positive().describe("Issue number to move"),
+  // `issue_number` is the canonical name, matching every other issue-taking
+  // tool (#278). `issue` — this tool's original name — stays as a deprecated
+  // alias for one release so hosts with a cached schema don't hard-break.
+  issue_number: z.number().int().positive().optional().describe("Issue number to move"),
+  issue: z.number().int().positive().optional().describe("DEPRECATED alias for issue_number — use issue_number"),
   status: z
     .enum(STATUSES)
     .describe('Target column: "Backlog", "Ready", "In Progress", or "Review" (Done is owned by native automation)'),
@@ -23,14 +27,19 @@ export const inputSchema = z.object({
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 
 export async function handler(input: z.infer<typeof inputSchema>) {
+  const issueNumber = input.issue_number ?? input.issue;
+  if (!issueNumber) {
+    return text("[okffs] update_project_status needs an issue_number (which issue to move).");
+  }
+
   if (!config.projectEnabled) {
     return text("OKFFS_PROJECT_ENABLED is not set — project status updates are disabled.");
   }
 
-  const itemId = await getProjectItemForIssue(input.issue);
+  const itemId = await getProjectItemForIssue(issueNumber);
   if (!itemId) {
     return text(
-      `Issue #${input.issue} is not on the project board. Add it first (create_issue with ` +
+      `Issue #${issueNumber} is not on the project board. Add it first (create_issue with ` +
         "OKFFS_PROJECT_AUTO_ADD=true, or add it to the board manually)."
     );
   }
@@ -47,5 +56,5 @@ export async function handler(input: z.infer<typeof inputSchema>) {
   }
 
   await setProjectFieldValue(itemId, meta.statusFieldId, optionId);
-  return text(`Issue #${input.issue} moved to "${input.status}".`);
+  return text(`Issue #${issueNumber} moved to "${input.status}".`);
 }
