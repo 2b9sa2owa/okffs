@@ -59,7 +59,21 @@ export function splitCommitMessage(hint: string): { subject: string; body?: stri
 }
 
 export async function handler(input: z.infer<typeof inputSchema>) {
-  const issue = await getIssue(input.issue_number);
+  // A GitHub API failure here must surface as a contextual tool result, not a
+  // raw MCP -32603 internal error. Nothing has happened yet, so a plain error
+  // message is the right shape (#284).
+  let issue: Awaited<ReturnType<typeof getIssue>>;
+  try {
+    issue = await getIssue(input.issue_number);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      content: [{
+        type: "text" as const,
+        text: `commit_and_update failed: could not look up issue #${input.issue_number} (${msg}). Nothing was committed.`,
+      }],
+    };
+  }
   const branchName = extractBranchFromBody(issue.body);
 
   // Without a **Branch:** line there is no issue branch to commit to — carrying
@@ -188,7 +202,23 @@ export async function handler(input: z.infer<typeof inputSchema>) {
     decisionsSection ? `\n${decisionsSection}` : "",
   ].filter((l) => l !== undefined).join("\n");
 
-  await addIssueComment(input.issue_number, comment);
+  // The commit+push above is durable — a failure posting the comment must be
+  // reported as success-with-warning carrying the landed state (commit hash,
+  // branch), never escape as a raw MCP -32603 that hides the partial success (#284).
+  try {
+    await addIssueComment(input.issue_number, comment);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const landed = idempotentRetry
+      ? `Already committed and pushed as \`${commitHash}\` on \`${branchName}\` (idempotent retry)`
+      : `Committed \`${commitHash}\` and pushed to \`${branchName}\``;
+    return {
+      content: [{
+        type: "text" as const,
+        text: `${landed}. Posting the progress comment to issue #${input.issue_number} failed (${msg}) — the commit is safe and does NOT need to be redone; retry just the comment with comment_issue.`,
+      }],
+    };
+  }
 
   return {
     content: [{
