@@ -177,14 +177,35 @@ export async function handler(input: z.infer<typeof inputSchema>) {
       };
     }
 
+    const numstatLines = (raw: string): string[] =>
+      raw.split("\n").filter(Boolean).map((line) => {
+        const [adds, dels, ...rest] = line.split("\t");
+        return `\`${rest.join("\t")}\` (+${adds}/-${dels})`;
+      });
+
     git(["add", input.include_untracked ? "-A" : "-u"]);
     stagedFiles = gitOutput(["diff", "--cached", "--name-only"]).split("\n").filter(Boolean);
+    // Defense in depth (PR #289 review): the pre-staging check above already
+    // covers pre-staged index entries (`git diff HEAD` includes the index), but
+    // re-check the actually-staged list so nothing staged out-of-band can reach
+    // the commit through an edge the name-diff missed.
+    const stagedSecrets = matchSecretPaths(stagedFiles);
+    if (stagedSecrets.length > 0 && !input.allow_secret_paths) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: [
+            `commit_and_update refused: these staged files match the secrets deny-list:`,
+            ...stagedSecrets.map((f) => `- \`${f}\``),
+            ``,
+            `Nothing was committed (the files remain staged). Unstage and delete or gitignore them — or, only if they genuinely contain no secrets, re-call with allow_secret_paths: true.`,
+          ].join("\n"),
+        }],
+      };
+    }
     // Per-file additions/deletions for the tool result and issue comment, so an
     // unexpected file is visible to the caller — untruncated (#265).
-    stagedStats = gitOutput(["diff", "--cached", "--numstat"]).split("\n").filter(Boolean).map((line) => {
-      const [adds, dels, ...rest] = line.split("\t");
-      return `\`${rest.join("\t")}\` (+${adds}/-${dels})`;
-    });
+    stagedStats = numstatLines(gitOutput(["diff", "--cached", "--numstat"]));
 
     // Idempotent retry (#269): nothing staged means `git commit` would fail
     // with "nothing to commit". That's expected when a previous invocation
@@ -205,6 +226,10 @@ export async function handler(input: z.infer<typeof inputSchema>) {
         // history grows, and after `finally` we're back on the caller's branch
         // (PR #277 review).
         retrySubject = gitOutput(["log", "-1", "--pretty=%s", head]);
+        // Retries usually happen because the caller never saw the prior output —
+        // report the landed commit's files rather than "No files detected"
+        // (PR #289 review).
+        stagedStats = numstatLines(gitOutput(["show", "--numstat", "--format=", head]));
       } else {
         const untrackedNote = skippedUntracked.length > 0
           ? ` Note: ${skippedUntracked.length} untracked file(s) were not staged (${skippedUntracked.map((f) => `\`${f}\``).join(", ")}) — pass include_untracked: true to include them.`
