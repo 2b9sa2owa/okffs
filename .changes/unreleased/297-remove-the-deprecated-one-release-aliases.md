@@ -1,2 +1,0 @@
-<!-- okffs:type=Removed -->
-- The deprecated one-release aliases from 0.11.0: `hint` on `commit_and_update` (use `message`, #290), `description` on `create_issue` and the task objects of `plan` / `create_issues_from_list` (use `body`, #282), and `issue` on `update_project_status` (use `issue_number`, #278). Passing a removed name now returns an actionable error naming the canonical param ([#297](https://github.com/neturely/okffs/issues/297))

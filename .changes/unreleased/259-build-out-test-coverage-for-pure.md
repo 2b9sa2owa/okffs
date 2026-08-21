@@ -1,2 +1,0 @@
-<!-- okffs:type=Changed -->
-- Pure-logic test coverage built out to 70 tests (#253 baseline): branch/version/remote/priority helpers, issue-body parsing, commit-message splitting, the CLI `.env` round-trip, and the #257 repo-scoped board transforms (fixture-proven against foreign-board leakage) now live in importable pure modules — `branch.ts`, `version.ts`, `remote.ts`, `priority.ts`, `projects_transform.ts` — with re-exports keeping every importer unchanged ([#259](https://github.com/neturely/okffs/issues/259))
