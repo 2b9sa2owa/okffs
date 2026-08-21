@@ -2,22 +2,21 @@ import { z } from "zod";
 import { addIssueComment, getIssue, extractBranchFromBody } from "../github.js";
 import { git, gitOutput, currentBranch } from "../git.js";
 import { renderAutopilotDecisions, AUTOPILOT_DECISIONS_DESCRIPTION } from "../autopilot.js";
-import { matchSecretPaths, buildAutoCommitMessage } from "../staging.js";
+import { matchSecretPaths, buildAutoCommitMessage, splitCommitMessage } from "../staging.js";
 
 export const name = "commit_and_update";
 export const description =
   "Stage tracked, modified files (untracked/new files require include_untracked: true), build a commit message from the provided message (used verbatim) or the staged file list, commit, push to the issue branch, and post a rich progress comment to the linked issue. Refuses to stage files matching a secrets deny-list (.env*, *.env, *.pem, *.key, id_rsa*, *credentials*, *.p12, *.pfx) unless explicitly overridden, and returns the full staged file list.";
 
-// `message` is the canonical param name (#290); `hint` — the original name —
-// stays as a deprecated alias for one release (#279/#282 pattern). The object
-// is passthrough, not strict, so unknown keys (e.g. `commit_message`) reach the
-// handler and get an actionable rejection instead of being silently stripped
-// by zod — a silently-dropped message is how the greyvensteins commit lost its
-// message entirely (#290).
+// `message` is the canonical param name (#290); the `hint` alias shipped in
+// 0.11.0 as a one-release deprecation and was removed in #297. The object is
+// passthrough, not strict, so unknown keys (e.g. `commit_message`, or the
+// removed `hint`) reach the handler and get an actionable rejection instead of
+// being silently stripped by zod — a silently-dropped message is how the
+// greyvensteins commit lost its message entirely (#290).
 export const inputSchema = z.object({
   issue_number: z.number().int().positive().describe("The issue number this work is against"),
   message: z.string().optional().describe("The commit message — used verbatim (word-boundary subject/body split) and in the issue comment"),
-  hint: z.string().optional().describe("DEPRECATED alias for message — use message"),
   include_untracked: z.boolean().optional().describe("Also stage untracked (new) files — off by default so scratch/backup files can't be silently swept into a commit (#265). Set true deliberately when the work added new files."),
   allow_secret_paths: z.boolean().optional().describe("Override the secrets deny-list refusal and stage matching files anyway. Only for files that genuinely contain no secrets."),
   autopilot_decisions: z.array(z.string()).optional().describe(AUTOPILOT_DECISIONS_DESCRIPTION),
@@ -26,56 +25,12 @@ export const inputSchema = z.object({
 const KNOWN_PARAMS = new Set([
   "issue_number",
   "message",
-  "hint",
   "include_untracked",
   "allow_secret_paths",
   "autopilot_decisions",
 ]);
 
-const SUBJECT_MAX = 72;
-
-/**
- * Split a free-text hint into a git commit subject + optional body.
- *
- * - Subject: the first **non-blank** line, truncated to ~72 chars at a **word
- *   boundary** (never mid-word) — a single unbreakable word longer than the
- *   limit is the only case that gets a hard cut. Leading blank lines are skipped
- *   so a hint like "\nAdd X" doesn't produce an empty subject (#236).
- * - Body: any lines after the subject line, plus whatever overflowed past the
- *   subject, joined as blank-line-separated paragraphs. `undefined` when the
- *   hint fits entirely in the subject, so a short single-line hint behaves
- *   exactly as before (subject only). (#228)
- *
- * A whitespace-only hint has no usable subject line and returns `{ subject: "" }`
- * — the handler guards against that by treating a blank hint as absent (#236).
- */
-export function splitCommitMessage(hint: string): { subject: string; body?: string } {
-  const lines = hint.split("\n");
-  // Take the subject from the first non-blank line, not lines[0], so leading
-  // blank lines don't yield an empty subject.
-  const firstIdx = lines.findIndex((l) => l.trim() !== "");
-  if (firstIdx === -1) return { subject: "" };
-  const firstLine = lines[firstIdx].trim();
-  const rest = lines.slice(firstIdx + 1).join("\n").trim();
-
-  let subject = firstLine;
-  let overflow = "";
-  if (firstLine.length > SUBJECT_MAX) {
-    const slice = firstLine.slice(0, SUBJECT_MAX);
-    const lastSpace = slice.lastIndexOf(" ");
-    if (lastSpace > 0) {
-      subject = firstLine.slice(0, lastSpace).trimEnd();
-      overflow = firstLine.slice(lastSpace + 1).trim();
-    } else {
-      // A single word longer than the limit — no boundary to break on.
-      subject = slice;
-      overflow = firstLine.slice(SUBJECT_MAX).trim();
-    }
-  }
-
-  const body = [overflow, rest].filter(Boolean).join("\n\n");
-  return body ? { subject, body } : { subject };
-}
+// splitCommitMessage lives in staging.ts (pure, unit-testable — #259).
 
 export async function handler(input: z.infer<typeof inputSchema>) {
   // Reject unknown params explicitly (#290): zod's default strip means a
@@ -83,25 +38,16 @@ export async function handler(input: z.infer<typeof inputSchema>) {
   // lands with the auto-generated fallback message instead of the caller's.
   const unknownParams = Object.keys(input).filter((k) => !KNOWN_PARAMS.has(k));
   if (unknownParams.length > 0) {
+    const hintNote = unknownParams.includes("hint")
+      ? " (`hint` was removed in 0.12.0 — pass the commit message as `message`.)"
+      : "";
     return {
       content: [{
         type: "text" as const,
-        text: `[okffs] commit_and_update: unknown parameter(s) ${unknownParams.map((k) => `\`${k}\``).join(", ")} — nothing was committed. Valid parameters: issue_number, message (the commit message), include_untracked, allow_secret_paths, autopilot_decisions.`,
+        text: `[okffs] commit_and_update: unknown parameter(s) ${unknownParams.map((k) => `\`${k}\``).join(", ")} — nothing was committed. Valid parameters: issue_number, message (the commit message), include_untracked, allow_secret_paths, autopilot_decisions.${hintNote}`,
       }],
     };
   }
-  if (input.message !== undefined && input.hint !== undefined) {
-    return {
-      content: [{
-        type: "text" as const,
-        text: "[okffs] commit_and_update: pass the commit message as `message` only — `hint` is a deprecated alias and cannot be combined with it. Nothing was committed.",
-      }],
-    };
-  }
-  const hintDeprecationWarning = input.hint !== undefined
-    ? "[okffs] commit_and_update: `hint` is deprecated — use `message`. The alias will be removed in a future release."
-    : "";
-  if (hintDeprecationWarning) console.warn(hintDeprecationWarning);
 
   // A GitHub API failure here must surface as a contextual tool result, not a
   // raw MCP -32603 internal error. Nothing has happened yet, so a plain error
@@ -134,7 +80,7 @@ export async function handler(input: z.infer<typeof inputSchema>) {
 
   // Trim so a whitespace-only message (e.g. "   ") counts as absent — otherwise
   // it is truthy and yields an empty commit subject (#236).
-  const hintText = (input.message ?? input.hint ?? "").trim();
+  const hintText = (input.message ?? "").trim();
 
   // Stage, commit, and push on the issue branch. Arguments are passed as an
   // array (no shell), so the hint and branch name can't be interpreted as
@@ -341,8 +287,7 @@ export async function handler(input: z.infer<typeof inputSchema>) {
       type: "text" as const,
       text: (idempotentRetry
         ? `Already committed and pushed as \`${commitHash}\` (idempotent retry) — refreshed issue #${input.issue_number}.`
-        : `Committed \`${commitHash}\` and updated issue #${input.issue_number}.`) + resultFiles + resultSkipped +
-        (hintDeprecationWarning ? `\n\n${hintDeprecationWarning}` : ""),
+        : `Committed \`${commitHash}\` and updated issue #${input.issue_number}.`) + resultFiles + resultSkipped,
     }],
   };
 }

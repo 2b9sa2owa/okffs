@@ -8,6 +8,16 @@
 
 import { graphqlRequest, owner, repo } from "./github.js";
 import { config } from "./config.js";
+import {
+  pickProjectItem,
+  mapProjectFieldsByIssue,
+  mapOrgIssueFieldValues,
+  type ProjectItemFields,
+  type IssueProjectItemsNode,
+  type IssueFieldValuesNode,
+} from "./projects_transform.js";
+
+export type { ProjectItemFields } from "./projects_transform.js";
 
 export interface ProjectSingleSelect {
   fieldId: string;
@@ -329,13 +339,7 @@ export async function getProjectItemForIssue(issueNumber: number): Promise<strin
     )
   );
   const nodes = data.repository?.issue?.projectItems.nodes ?? [];
-  return nodes.find((n) => n.project.id === projectId)?.id ?? null;
-}
-
-export interface ProjectItemFields {
-  status?: string;
-  priority?: string; // project-native fields only (org Issue Fields aren't exposed
-  effort?: string;   // on the project item — see getOrgIssueFieldValuesByNumber)
+  return pickProjectItem(nodes, projectId)?.id ?? null;
 }
 
 // Map of issue number → its board Status + project-native Priority/Effort, for
@@ -357,20 +361,7 @@ export async function getProjectFieldsByIssueNumber(): Promise<Map<number, Proje
   const data = await projectCall(() =>
     graphqlRequest<{
       repository: {
-        issues: {
-          nodes: Array<{
-            number: number;
-            projectItems: {
-              nodes: Array<{
-                project: { id: string };
-                status: { name?: string } | null;
-                priority: { name?: string } | null;
-                effort: { name?: string } | null;
-              }>;
-              pageInfo: { hasNextPage: boolean };
-            };
-          }>;
-        };
+        issues: { nodes: IssueProjectItemsNode[] };
       } | null;
     }>(
       `query($owner:String!,$repo:String!){
@@ -401,25 +392,7 @@ export async function getProjectFieldsByIssueNumber(): Promise<Map<number, Proje
     )
   );
 
-  const result = new Map<number, ProjectItemFields>();
-  for (const issue of data.repository?.issues.nodes ?? []) {
-    // Unrealistic (an issue on >10 boards), but announce it rather than silently
-    // dropping the board we didn't page to.
-    if (issue.projectItems.pageInfo.hasNextPage) {
-      console.warn(
-        `[okffs] Issue #${issue.number} is on more than 10 project boards; ` +
-          "only the first 10 were checked for board fields."
-      );
-    }
-    const item = issue.projectItems.nodes.find((n) => n.project.id === projectId);
-    if (!item) continue;
-    const fields: ProjectItemFields = {};
-    if (item.status?.name) fields.status = item.status.name;
-    if (item.priority?.name) fields.priority = item.priority.name;
-    if (item.effort?.name) fields.effort = item.effort.name;
-    if (fields.status || fields.priority || fields.effort) result.set(issue.number, fields);
-  }
-  return result;
+  return mapProjectFieldsByIssue(data.repository?.issues.nodes ?? [], projectId);
 }
 
 // Map of issue number → its org-level Issue Field single-select values, keyed by
@@ -433,18 +406,7 @@ export async function getOrgIssueFieldValuesByNumber(): Promise<Map<number, Map<
   const data = await orgFieldCall(() =>
     graphqlRequest<{
       repository: {
-        issues: {
-          nodes: Array<{
-            number: number;
-            issueFieldValues: {
-              nodes: Array<{
-                __typename?: string;
-                name?: string;
-                field?: { name?: string };
-              }>;
-            };
-          }>;
-        };
+        issues: { nodes: IssueFieldValuesNode[] };
       } | null;
     }>(
       `query($owner:String!,$repo:String!){
@@ -469,14 +431,5 @@ export async function getOrgIssueFieldValuesByNumber(): Promise<Map<number, Map<
     )
   );
 
-  const result = new Map<number, Map<string, string>>();
-  for (const issue of data.repository?.issues.nodes ?? []) {
-    const values = new Map<string, string>();
-    for (const v of issue.issueFieldValues.nodes) {
-      const fname = v.field?.name;
-      if (fname && v.name) values.set(fname.toLowerCase(), v.name);
-    }
-    if (values.size) result.set(issue.number, values);
-  }
-  return result;
+  return mapOrgIssueFieldValues(data.repository?.issues.nodes ?? []);
 }

@@ -78,9 +78,10 @@ export async function getDescription(): Promise<string> {
 export const inputSchema = z.object({
   title: z.string().describe("Issue title"),
   // `body` is the canonical name (#282), matching update_issue and GitHub's own
-  // field; `description` stays as a deprecated alias for one release (#279 pattern).
-  body: z.string().optional().describe("Issue body"),
-  description: z.string().optional().describe("DEPRECATED alias for body — use body"),
+  // field. The `description` alias shipped in 0.11.0 as a one-release
+  // deprecation and was removed in #297; required in the schema so a missing
+  // body fails validation up front rather than at runtime (PR #300 review).
+  body: z.string().describe("Issue body"),
   assignees: z.array(z.string()).optional().describe("GitHub usernames to assign"),
   labels: z.array(z.string()).optional().describe("Labels to apply e.g. bug, feature"),
   milestone: z.number().int().optional().describe("Milestone number to assign"),
@@ -100,7 +101,6 @@ export async function handler(input: z.infer<typeof inputSchema>) {
   if (!bodyRes.ok) {
     return { content: [{ type: "text" as const, text: bodyRes.error }] };
   }
-  if (bodyRes.deprecationWarning) console.warn(bodyRes.deprecationWarning);
   const issueBody = bodyRes.body;
 
   const resolvedAssignees = input.assignees ?? config.defaultAssignees;
@@ -273,10 +273,6 @@ export async function handler(input: z.infer<typeof inputSchema>) {
       `  labels: ["feature", "bug"]`,
       `Or set OKFFS_PROMPT_METADATA=false in .env to hide this tip.`
     );
-  }
-
-  if (bodyRes.deprecationWarning) {
-    lines.push(``, bodyRes.deprecationWarning);
   }
 
   return {

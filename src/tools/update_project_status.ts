@@ -15,10 +15,10 @@ const STATUSES = ["Backlog", "Ready", "In Progress", "Review"] as const;
 
 export const inputSchema = z.object({
   // `issue_number` is the canonical name, matching every other issue-taking
-  // tool (#278). `issue` — this tool's original name — stays as a deprecated
-  // alias for one release so hosts with a cached schema don't hard-break.
-  issue_number: z.number().int().positive().optional().describe("Issue number to move"),
-  issue: z.number().int().positive().optional().describe("DEPRECATED alias for issue_number — use issue_number"),
+  // tool (#278). The `issue` alias shipped in 0.11.0 as a one-release
+  // deprecation and was removed in #297; required in the schema so a missing
+  // issue number fails validation up front (PR #300 review).
+  issue_number: z.number().int().positive().describe("Issue number to move"),
   status: z
     .enum(STATUSES)
     .describe('Target column: "Backlog", "Ready", "In Progress", or "Review" (Done is owned by native automation)'),
@@ -27,10 +27,7 @@ export const inputSchema = z.object({
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 
 export async function handler(input: z.infer<typeof inputSchema>) {
-  const issueNumber = input.issue_number ?? input.issue;
-  if (!issueNumber) {
-    return text("[okffs] update_project_status needs an issue_number (which issue to move).");
-  }
+  const issueNumber = input.issue_number;
 
   if (!config.projectEnabled) {
     return text("OKFFS_PROJECT_ENABLED is not set — project status updates are disabled.");

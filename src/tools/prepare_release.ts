@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { createPullRequest, getDefaultBranch } from "../github.js";
 import { getUnreleasedSection, rollChangelogForRelease, foldFragmentsIntoChangelog } from "../docs.js";
+import { bumpVersion, replaceExactly } from "../version.js";
 import { git, currentBranch } from "../git.js";
 import { config } from "../config.js";
 
@@ -17,31 +18,7 @@ export const inputSchema = z.object({
   confirmed: z.boolean().optional().describe("Must be true to apply (otherwise previews)"),
 });
 
-function bumpVersion(v: string, type: "patch" | "minor" | "major"): string {
-  const m = v.match(/^(\d+)\.(\d+)\.(\d+)$/);
-  if (!m) throw new Error(`Cannot parse current version "${v}".`);
-  const [maj, min, pat] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  if (type === "major") return `${maj + 1}.0.0`;
-  if (type === "minor") return `${maj}.${min + 1}.0`;
-  return `${maj}.${min}.${pat + 1}`;
-}
-
-// Replace the first `count` occurrences of an exact substring. Throws if fewer
-// than `count` occurrences exist — a partial version bump must never proceed.
-function replaceExactly(content: string, search: string, replace: string, count: number, label: string): string {
-  const found = content.split(search).length - 1;
-  if (found < count) {
-    throw new Error(`Expected at least ${count} occurrence(s) of \`${search}\` in ${label} but found ${found}. Aborting to avoid an inconsistent version bump.`);
-  }
-  let out = content;
-  let from = 0;
-  for (let i = 0; i < count; i++) {
-    const at = out.indexOf(search, from);
-    out = out.slice(0, at) + replace + out.slice(at + search.length);
-    from = at + replace.length;
-  }
-  return out;
-}
+// bumpVersion and replaceExactly live in version.ts (pure, unit-testable — #259).
 
 export async function handler(input: z.infer<typeof inputSchema>) {
   const base = process.cwd();

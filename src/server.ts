@@ -16,6 +16,7 @@ import {
   GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { zodToJsonSchema } from "zod-to-json-schema";
+import { isNewer } from "./version.js";
 
 import * as createIssue from "./tools/create_issue.js";
 import * as listIssues from "./tools/list_issues.js";
@@ -76,7 +77,7 @@ Common action → tool:
 - Start work: create_issue (creates the issue, the linked branch, and the **Branch:** line that create_pull_request/commit_and_update rely on). Many at once: create_issues_from_list or plan.
 - Progress: commit_and_update (stage + commit + push + issue comment) — prefer over raw git commit/push.
 - Open/finalize an issue's PR (into the base branch): create_pull_request (always adds Closes #N).
-- Promotion/release gate — a base→protected PR with no issue, e.g. develop→main: promote_branch (issue-less; adds the PR to the board; NEVER use raw \`gh pr create\` for this).
+- Promotion/release gate — a base→protected PR with no issue, e.g. develop→main: promote_branch (issue-less; adds the PR to the board; NEVER use raw \`gh pr create\` for this). When it auto-requests a review (e.g. Copilot), CHECK BACK for the feedback before handing the merge to the user: re-run promote_branch (a re-run reports the gate PR's unresolved review threads without re-requesting the billable review; list_issues surfaces them too) and address them via the address_pr_review loop — fixes land through fix_into_base, threads resolve only after the fix PR merges.
 - Edit an existing issue's core fields (title, assignees, labels, milestone, body): update_issue — prefer over raw \`gh issue edit\`. (Board Priority/Effort is set_issue_fields; Status column is update_project_status — those aren't issue fields.)
 - Board: create_issue sets an inferred priority/effort at creation; set them on an EXISTING issue with set_issue_fields; move columns with update_project_status (Backlog/Ready/In Progress/Review — Done is GitHub's own automation).
 - PR review: list_pr_review_comments → fix → reply_to_review_comment → resolve_review_thread (honours OKFFS_RESOLVE_THREADS); or the /okffs:address_pr_review prompt.
@@ -97,15 +98,7 @@ Rules: never merge, tag, or publish into OKFFS_PROTECTED_BRANCH autonomously —
 
 // Compare two dotted versions; >0 if a is newer than b. Prerelease suffixes are
 // ignored (split on `.`/`-`), which is fine for the coarse "did we upgrade?" check.
-function isNewer(a: string, b: string): boolean {
-  const pa = a.split(/[.-]/).map((n) => parseInt(n, 10) || 0);
-  const pb = b.split(/[.-]/).map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < 3; i++) {
-    const d = (pa[i] || 0) - (pb[i] || 0);
-    if (d !== 0) return d > 0;
-  }
-  return false;
-}
+// isNewer lives in version.ts (pure, unit-testable — #259).
 
 // Upgrade nudge (#242): if this repo's .env was configured by an older okffs (or
 // predates version stamping) AND this okffs version has config options not set

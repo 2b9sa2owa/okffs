@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { matchSecretPaths, buildAutoCommitMessage } from "./staging.js";
+import { matchSecretPaths, buildAutoCommitMessage, splitCommitMessage } from "./staging.js";
 
 test("matchSecretPaths catches the exact filenames from the felix incident (#265)", () => {
   const files = ["src/main.py", ".env.bak-169-creds", ".env.pre-okffs220.bak", "CLAUDE.md"];
@@ -64,4 +64,41 @@ test("buildAutoCommitMessage never truncates — long lists fall back to a count
   for (const f of files) {
     assert.ok(msg.body?.includes(f), `body must list ${f} untruncated`);
   }
+});
+
+// ── splitCommitMessage (#259) ───────────────────────────────────────────────
+
+test("splitCommitMessage keeps a short single line as subject only", () => {
+  assert.deepEqual(splitCommitMessage("fix: the bug"), { subject: "fix: the bug" });
+});
+
+test("splitCommitMessage skips leading blank lines (#236)", () => {
+  assert.deepEqual(splitCommitMessage("\n\nfix: the bug"), { subject: "fix: the bug" });
+});
+
+test("splitCommitMessage returns an empty subject for whitespace-only input (#236)", () => {
+  assert.deepEqual(splitCommitMessage("   \n\t\n"), { subject: "" });
+});
+
+test("splitCommitMessage puts extra lines in the body (#228)", () => {
+  assert.deepEqual(splitCommitMessage("fix: the bug\n\nDetails here."), {
+    subject: "fix: the bug",
+    body: "Details here.",
+  });
+});
+
+test("splitCommitMessage breaks a long first line at a word boundary, never mid-word", () => {
+  const long = "fix: a very long subject line that certainly exceeds the seventy-two character limit";
+  const { subject, body } = splitCommitMessage(long);
+  assert.ok(subject.length <= 72);
+  assert.ok(!subject.endsWith("-")); // not cut mid-word
+  assert.ok(long.startsWith(subject));
+  assert.ok(body && long.endsWith(body.split("\n\n")[0]!.slice(-10)));
+});
+
+test("splitCommitMessage hard-cuts only a single unbreakable overlong word", () => {
+  const word = "x".repeat(100);
+  const { subject, body } = splitCommitMessage(word);
+  assert.equal(subject, "x".repeat(72));
+  assert.equal(body, "x".repeat(28));
 });

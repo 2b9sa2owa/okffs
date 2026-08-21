@@ -5,6 +5,16 @@ See [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-21
+### Added
+- Promotion-PR review feedback is surfaced proactively: re-running `promote_branch` on an existing gate PR reports its unresolved review threads (count + reviewers + the `address_pr_review` loop to run) without re-requesting the billable review, and `list_issues` prints a "Release gate" header when the open base→protected PR has unresolved threads — even with zero open issues. Pure summarization in `src/review_gate.ts` ([#302](https://github.com/neturely/okffs/issues/302))
+### Changed
+- Pure-logic test coverage built out to 70 tests (#253 baseline): branch/version/remote/priority helpers, issue-body parsing, commit-message splitting, the CLI `.env` round-trip, and the #257 repo-scoped board transforms (fixture-proven against foreign-board leakage) now live in importable pure modules — `branch.ts`, `version.ts`, `remote.ts`, `priority.ts`, `projects_transform.ts` — with re-exports keeping every importer unchanged ([#259](https://github.com/neturely/okffs/issues/259))
+### Fixed
+- `update_issue` with a `body` no longer wipes okffs-owned issue metadata: the `**Branch:**` line and `## Relationships` section are re-appended automatically when the new body omits them (escape hatch: `preserve_metadata: false`), so `commit_and_update` / `merge_pull_request` / `create_pull_request` keep working after a body rewrite. `extractBranchFromBody` is now anchored to a line start, so a body that merely quotes the branch-line pattern mid-prose can't shadow the real branch line ([#295](https://github.com/neturely/okffs/issues/295))
+### Removed
+- The deprecated one-release aliases from 0.11.0: `hint` on `commit_and_update` (use `message`, #290), `description` on `create_issue` and the task objects of `plan` / `create_issues_from_list` (use `body`, #282), and `issue` on `update_project_status` (use `issue_number`, #278). Passing a removed name now returns an actionable error naming the canonical param ([#297](https://github.com/neturely/okffs/issues/297))
+
 ## [0.11.0] - 2026-08-12
 ### Security
 - `commit_and_update` no longer silently sweeps untracked files into commits: staging defaults to tracked-modified only (`git add -u`), untracked files require `include_untracked: true`, a secrets deny-list (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `*credentials*`, `*.p12`, `*.pfx`) refuses secret-looking filenames unless overridden, the caller's `hint` is used verbatim as the commit message, and the tool result lists every staged file untruncated with per-file +/- counts ([#265](https://github.com/neturely/okffs/issues/265))
@@ -184,7 +194,8 @@ See [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `create_pull_request` commits the updated CHANGELOG onto the branch and pushes the branch before opening the PR, with non-blocking error handling ([#38](https://github.com/2b9sa2owa/okffs/issues/38)).
 - All git operations now run via `execFileSync` with argument arrays (no shell), removing command-injection risk from branch names and commit hints; tools also checkout the target branch before committing/pushing and restore the original branch afterward.
 
-[Unreleased]: https://github.com/neturely/okffs/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/neturely/okffs/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/neturely/okffs/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/neturely/okffs/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/neturely/okffs/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/neturely/okffs/compare/v0.10.0...v0.10.1
