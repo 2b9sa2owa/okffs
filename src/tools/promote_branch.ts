@@ -6,9 +6,11 @@ import {
   getOpenPullRequestForBranch,
   updatePullRequest,
   requestReviewers,
+  getPullRequestReview,
 } from "../github.js";
 import { config } from "../config.js";
 import { addIssueToProject, getProjectMetadata, setProjectFieldValue } from "../projects.js";
+import { summarizeReviewThreads, renderReviewGateWarning } from "../review_gate.js";
 
 export const name = "promote_branch";
 
@@ -22,7 +24,10 @@ export const description =
   "or tags; that stays with the user. If a promotion PR is already open for the head branch it is updated and returned " +
   "rather than erroring (GitHub allows only one open PR per head→base pair). When OKFFS_PROMOTION_AUTO_REVIEW is true, " +
   "OKFFS_PROMOTION_REVIEWERS (e.g. Copilot) are requested — only on a newly-created gate PR, never on re-runs, to avoid " +
-  "repeat (possibly billable) reviews; when OKFFS_PROMOTION_STATUS is set, the board card lands in that column.";
+  "repeat (possibly billable) reviews; when OKFFS_PROMOTION_STATUS is set, the board card lands in that column. " +
+  "A re-run on an existing gate PR also reports its unresolved review threads (e.g. Copilot feedback that landed after " +
+  "the review was requested) and points at the address_pr_review loop — so re-running promote_branch is the way to " +
+  "check the release gate before handing the merge to the user.";
 
 export const inputSchema = z.object({
   head: z
@@ -139,6 +144,22 @@ export async function handler(input: z.infer<typeof inputSchema>) {
         `Reviewers not re-requested on this update (auto-review requests on create only, to avoid repeat cost). ` +
         `Re-request manually if you want a fresh review.`
       );
+    }
+  }
+
+  // On a re-run over an existing gate PR, surface any review feedback that has
+  // landed since — the requested (possibly billable) review is useless if nobody
+  // ever checks back for it (#302). Best-effort, like the other side effects; a
+  // freshly-created PR can't have threads yet, so skip the extra call there.
+  if (action === "updated") {
+    try {
+      const review = await getPullRequestReview(pr.number);
+      const warning = renderReviewGateWarning(pr.number, summarizeReviewThreads(review.threads));
+      if (warning) notes.push(warning);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[okffs] Failed to check review threads on PR #${pr.number}:`, msg);
+      notes.push(`⚠️ Could not check the PR's review threads: ${msg}`);
     }
   }
 
