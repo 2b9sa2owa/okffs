@@ -563,11 +563,11 @@ export async function createDraftPullRequest(
   );
 }
 
-export function extractBranchFromBody(body: string | null): string | null {
-  if (!body) return null;
-  const match = body.match(/\*\*Branch:\*\*\s+`([^`]+)`/);
-  return match ? match[1] : null;
-}
+// Moved to issue_body.ts (pure, unit-testable — #295); re-exported so existing
+// importers keep working. The extraction is now anchored to a line start, so a
+// body that merely quotes the "**Branch:** `...`" pattern mid-prose no longer
+// shadows the real metadata line.
+export { extractBranchFromBody } from "./issue_body.js";
 
 // ── PR review feedback ──────────────────────────────────────────────────────
 
