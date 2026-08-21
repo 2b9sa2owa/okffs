@@ -43,11 +43,10 @@ const relationshipSchema = z.object({
 
 const taskSchema = z.object({
   title: z.string().describe("Issue title"),
-  // `body` is the canonical name (#282); `description` is a deprecated alias
-  // for one release (#279 pattern). Note the top-level `description` input (the
-  // free-text work description) is a different field and is unaffected.
+  // `body` is the canonical name (#282); the per-task `description` alias was
+  // removed in #297. Note the top-level `description` input (the free-text work
+  // description) is a different field and is unaffected.
   body: z.string().optional().describe("Issue body"),
-  description: z.string().optional().describe("DEPRECATED alias for body — use body"),
   assignees: z.array(z.string()).optional().describe("GitHub usernames to assign"),
   labels: z.array(z.string()).optional().describe("Labels to apply to this issue"),
   milestone: z.number().int().optional().describe("Milestone number to assign"),
@@ -86,7 +85,6 @@ const RELATIONSHIP_LABELS: Record<string, string> = {
 export async function handler(input: z.infer<typeof inputSchema>) {
   // Resolve each task's body up front (#282) so a bad task errors at preview
   // time, before anything is created.
-  const bodyWarnings: string[] = [];
   const bodyErrors: string[] = [];
   const taskBodies: string[] = [];
   input.tasks.forEach((t, i) => {
@@ -95,14 +93,12 @@ export async function handler(input: z.infer<typeof inputSchema>) {
       bodyErrors.push(res.error);
       taskBodies.push("");
     } else {
-      if (res.deprecationWarning) bodyWarnings.push(res.deprecationWarning);
       taskBodies.push(res.body);
     }
   });
   if (bodyErrors.length > 0) {
     return { content: [{ type: "text" as const, text: bodyErrors.join("\n") }] };
   }
-  for (const w of bodyWarnings) console.warn(w);
 
   if (!input.confirmed) {
     const preview = input.tasks
@@ -329,8 +325,7 @@ export async function handler(input: z.infer<typeof inputSchema>) {
       {
         type: "text" as const,
         text:
-          `Created ${results.length} issue(s) from the plan:\n\n${results.join("\n\n")}` +
-          (bodyWarnings.length > 0 ? `\n\n${[...new Set(bodyWarnings)].join("\n")}` : ""),
+          `Created ${results.length} issue(s) from the plan:\n\n${results.join("\n\n")}`,
       },
     ],
   };

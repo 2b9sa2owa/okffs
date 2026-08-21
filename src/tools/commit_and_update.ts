@@ -8,16 +8,15 @@ export const name = "commit_and_update";
 export const description =
   "Stage tracked, modified files (untracked/new files require include_untracked: true), build a commit message from the provided message (used verbatim) or the staged file list, commit, push to the issue branch, and post a rich progress comment to the linked issue. Refuses to stage files matching a secrets deny-list (.env*, *.env, *.pem, *.key, id_rsa*, *credentials*, *.p12, *.pfx) unless explicitly overridden, and returns the full staged file list.";
 
-// `message` is the canonical param name (#290); `hint` — the original name —
-// stays as a deprecated alias for one release (#279/#282 pattern). The object
-// is passthrough, not strict, so unknown keys (e.g. `commit_message`) reach the
-// handler and get an actionable rejection instead of being silently stripped
-// by zod — a silently-dropped message is how the greyvensteins commit lost its
-// message entirely (#290).
+// `message` is the canonical param name (#290); the `hint` alias shipped in
+// 0.11.0 as a one-release deprecation and was removed in #297. The object is
+// passthrough, not strict, so unknown keys (e.g. `commit_message`, or the
+// removed `hint`) reach the handler and get an actionable rejection instead of
+// being silently stripped by zod — a silently-dropped message is how the
+// greyvensteins commit lost its message entirely (#290).
 export const inputSchema = z.object({
   issue_number: z.number().int().positive().describe("The issue number this work is against"),
   message: z.string().optional().describe("The commit message — used verbatim (word-boundary subject/body split) and in the issue comment"),
-  hint: z.string().optional().describe("DEPRECATED alias for message — use message"),
   include_untracked: z.boolean().optional().describe("Also stage untracked (new) files — off by default so scratch/backup files can't be silently swept into a commit (#265). Set true deliberately when the work added new files."),
   allow_secret_paths: z.boolean().optional().describe("Override the secrets deny-list refusal and stage matching files anyway. Only for files that genuinely contain no secrets."),
   autopilot_decisions: z.array(z.string()).optional().describe(AUTOPILOT_DECISIONS_DESCRIPTION),
@@ -26,7 +25,6 @@ export const inputSchema = z.object({
 const KNOWN_PARAMS = new Set([
   "issue_number",
   "message",
-  "hint",
   "include_untracked",
   "allow_secret_paths",
   "autopilot_decisions",
@@ -83,25 +81,16 @@ export async function handler(input: z.infer<typeof inputSchema>) {
   // lands with the auto-generated fallback message instead of the caller's.
   const unknownParams = Object.keys(input).filter((k) => !KNOWN_PARAMS.has(k));
   if (unknownParams.length > 0) {
+    const hintNote = unknownParams.includes("hint")
+      ? " (`hint` was removed in 0.12.0 — pass the commit message as `message`.)"
+      : "";
     return {
       content: [{
         type: "text" as const,
-        text: `[okffs] commit_and_update: unknown parameter(s) ${unknownParams.map((k) => `\`${k}\``).join(", ")} — nothing was committed. Valid parameters: issue_number, message (the commit message), include_untracked, allow_secret_paths, autopilot_decisions.`,
+        text: `[okffs] commit_and_update: unknown parameter(s) ${unknownParams.map((k) => `\`${k}\``).join(", ")} — nothing was committed. Valid parameters: issue_number, message (the commit message), include_untracked, allow_secret_paths, autopilot_decisions.${hintNote}`,
       }],
     };
   }
-  if (input.message !== undefined && input.hint !== undefined) {
-    return {
-      content: [{
-        type: "text" as const,
-        text: "[okffs] commit_and_update: pass the commit message as `message` only — `hint` is a deprecated alias and cannot be combined with it. Nothing was committed.",
-      }],
-    };
-  }
-  const hintDeprecationWarning = input.hint !== undefined
-    ? "[okffs] commit_and_update: `hint` is deprecated — use `message`. The alias will be removed in a future release."
-    : "";
-  if (hintDeprecationWarning) console.warn(hintDeprecationWarning);
 
   // A GitHub API failure here must surface as a contextual tool result, not a
   // raw MCP -32603 internal error. Nothing has happened yet, so a plain error
@@ -134,7 +123,7 @@ export async function handler(input: z.infer<typeof inputSchema>) {
 
   // Trim so a whitespace-only message (e.g. "   ") counts as absent — otherwise
   // it is truthy and yields an empty commit subject (#236).
-  const hintText = (input.message ?? input.hint ?? "").trim();
+  const hintText = (input.message ?? "").trim();
 
   // Stage, commit, and push on the issue branch. Arguments are passed as an
   // array (no shell), so the hint and branch name can't be interpreted as
@@ -341,8 +330,7 @@ export async function handler(input: z.infer<typeof inputSchema>) {
       type: "text" as const,
       text: (idempotentRetry
         ? `Already committed and pushed as \`${commitHash}\` (idempotent retry) — refreshed issue #${input.issue_number}.`
-        : `Committed \`${commitHash}\` and updated issue #${input.issue_number}.`) + resultFiles + resultSkipped +
-        (hintDeprecationWarning ? `\n\n${hintDeprecationWarning}` : ""),
+        : `Committed \`${commitHash}\` and updated issue #${input.issue_number}.`) + resultFiles + resultSkipped,
     }],
   };
 }
