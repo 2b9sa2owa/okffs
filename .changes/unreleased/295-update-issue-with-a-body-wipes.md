@@ -1,2 +1,2 @@
-<!-- okffs:type=Changed -->
-- update_issue with a body wipes okffs's own metadata (**Branch:** line, ## Relationships), breaking commit_and_update ([#295](https://github.com/neturely/okffs/issues/295))
+<!-- okffs:type=Fixed -->
+- `update_issue` with a `body` no longer wipes okffs-owned issue metadata: the `**Branch:**` line and `## Relationships` section are re-appended automatically when the new body omits them (escape hatch: `preserve_metadata: false`), so `commit_and_update` / `merge_pull_request` / `create_pull_request` keep working after a body rewrite. `extractBranchFromBody` is now anchored to a line start, so a body that merely quotes the branch-line pattern mid-prose can't shadow the real branch line ([#295](https://github.com/neturely/okffs/issues/295))
