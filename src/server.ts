@@ -16,6 +16,7 @@ import {
   GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { zodToJsonSchema } from "zod-to-json-schema";
+import { isNewer } from "./version.js";
 
 import * as createIssue from "./tools/create_issue.js";
 import * as listIssues from "./tools/list_issues.js";
@@ -97,15 +98,7 @@ Rules: never merge, tag, or publish into OKFFS_PROTECTED_BRANCH autonomously —
 
 // Compare two dotted versions; >0 if a is newer than b. Prerelease suffixes are
 // ignored (split on `.`/`-`), which is fine for the coarse "did we upgrade?" check.
-function isNewer(a: string, b: string): boolean {
-  const pa = a.split(/[.-]/).map((n) => parseInt(n, 10) || 0);
-  const pb = b.split(/[.-]/).map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < 3; i++) {
-    const d = (pa[i] || 0) - (pb[i] || 0);
-    if (d !== 0) return d > 0;
-  }
-  return false;
-}
+// isNewer lives in version.ts (pure, unit-testable — #259).
 
 // Upgrade nudge (#242): if this repo's .env was configured by an older okffs (or
 // predates version stamping) AND this okffs version has config options not set

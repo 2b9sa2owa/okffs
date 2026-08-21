@@ -7,6 +7,7 @@
 // wizard just collected rather than by process.env at import time.
 
 import { execFileSync } from "node:child_process";
+import { parseOwnerRepo } from "../remote.js";
 
 const BASE = "https://api.github.com";
 
@@ -29,10 +30,7 @@ export function resolveToken(explicit?: string): { token: string | null; source:
   return gh ? { token: gh, source: "gh" } : { token: null, source: "none" };
 }
 
-function parseOwnerRepo(remoteUrl: string): { owner: string; repo: string } | null {
-  const m = remoteUrl.match(/github\.com[:/]([^/]+)\/(.+?)(?:\.git)?$/);
-  return m ? { owner: m[1], repo: m[2] } : null;
-}
+// parseOwnerRepo is shared with github.ts via remote.ts (#259).
 
 /** Resolve owner/repo from explicit values, else the origin remote. Mirrors github.ts. */
 export function resolveOwnerRepo(explicitOwner?: string, explicitRepo?: string): { owner?: string; repo?: string } {

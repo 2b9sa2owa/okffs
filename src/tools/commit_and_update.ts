@@ -2,7 +2,7 @@ import { z } from "zod";
 import { addIssueComment, getIssue, extractBranchFromBody } from "../github.js";
 import { git, gitOutput, currentBranch } from "../git.js";
 import { renderAutopilotDecisions, AUTOPILOT_DECISIONS_DESCRIPTION } from "../autopilot.js";
-import { matchSecretPaths, buildAutoCommitMessage } from "../staging.js";
+import { matchSecretPaths, buildAutoCommitMessage, splitCommitMessage } from "../staging.js";
 
 export const name = "commit_and_update";
 export const description =
@@ -30,50 +30,7 @@ const KNOWN_PARAMS = new Set([
   "autopilot_decisions",
 ]);
 
-const SUBJECT_MAX = 72;
-
-/**
- * Split a free-text hint into a git commit subject + optional body.
- *
- * - Subject: the first **non-blank** line, truncated to ~72 chars at a **word
- *   boundary** (never mid-word) — a single unbreakable word longer than the
- *   limit is the only case that gets a hard cut. Leading blank lines are skipped
- *   so a hint like "\nAdd X" doesn't produce an empty subject (#236).
- * - Body: any lines after the subject line, plus whatever overflowed past the
- *   subject, joined as blank-line-separated paragraphs. `undefined` when the
- *   hint fits entirely in the subject, so a short single-line hint behaves
- *   exactly as before (subject only). (#228)
- *
- * A whitespace-only hint has no usable subject line and returns `{ subject: "" }`
- * — the handler guards against that by treating a blank hint as absent (#236).
- */
-export function splitCommitMessage(hint: string): { subject: string; body?: string } {
-  const lines = hint.split("\n");
-  // Take the subject from the first non-blank line, not lines[0], so leading
-  // blank lines don't yield an empty subject.
-  const firstIdx = lines.findIndex((l) => l.trim() !== "");
-  if (firstIdx === -1) return { subject: "" };
-  const firstLine = lines[firstIdx].trim();
-  const rest = lines.slice(firstIdx + 1).join("\n").trim();
-
-  let subject = firstLine;
-  let overflow = "";
-  if (firstLine.length > SUBJECT_MAX) {
-    const slice = firstLine.slice(0, SUBJECT_MAX);
-    const lastSpace = slice.lastIndexOf(" ");
-    if (lastSpace > 0) {
-      subject = firstLine.slice(0, lastSpace).trimEnd();
-      overflow = firstLine.slice(lastSpace + 1).trim();
-    } else {
-      // A single word longer than the limit — no boundary to break on.
-      subject = slice;
-      overflow = firstLine.slice(SUBJECT_MAX).trim();
-    }
-  }
-
-  const body = [overflow, rest].filter(Boolean).join("\n\n");
-  return body ? { subject, body } : { subject };
-}
+// splitCommitMessage lives in staging.ts (pure, unit-testable — #259).
 
 export async function handler(input: z.infer<typeof inputSchema>) {
   // Reject unknown params explicitly (#290): zod's default strip means a

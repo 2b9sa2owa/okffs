@@ -5,6 +5,7 @@ import {
   extractBranchFromBody,
   extractIssueMetadata,
   mergeIssueMetadata,
+  parseRelationships,
 } from "./issue_body.js";
 
 test("body alone resolves cleanly", () => {
@@ -78,4 +79,31 @@ test("mergeIssueMetadata with no stored metadata returns the body unchanged", ()
   const merged = mergeIssueMetadata("Anything.", extractIssueMetadata("old plain body"));
   assert.equal(merged.body, "Anything.");
   assert.deepEqual(merged.preserved, []);
+});
+
+// ── parseRelationships (#259) ───────────────────────────────────────────────
+
+test("parseRelationships reads all three relationship kinds", () => {
+  const rels = parseRelationships("Intro\n\n## Relationships\n- Parent: #1\n- Blocked by #3\n- Blocking #7\n- Blocked by #4");
+  assert.deepEqual(rels, { parent: [1], blockedBy: [3, 4], blocking: [7] });
+});
+
+test("parseRelationships is case-insensitive and tolerates missing colon on Parent", () => {
+  const rels = parseRelationships("## Relationships\n- parent #2\n- BLOCKED BY #9");
+  assert.deepEqual(rels, { parent: [2], blockedBy: [9], blocking: [] });
+});
+
+test("parseRelationships stops at the next heading", () => {
+  const rels = parseRelationships("## Relationships\n- Parent: #1\n\n## Notes\n- Blocking #99");
+  assert.deepEqual(rels, { parent: [1], blockedBy: [], blocking: [] });
+});
+
+test("parseRelationships never throws on malformed or absent input", () => {
+  assert.deepEqual(parseRelationships(null), { parent: [], blockedBy: [], blocking: [] });
+  assert.deepEqual(parseRelationships("no section here"), { parent: [], blockedBy: [], blocking: [] });
+  assert.deepEqual(parseRelationships("## Relationships\ngarbage line\n- Blocked by nothing"), {
+    parent: [],
+    blockedBy: [],
+    blocking: [],
+  });
 });
