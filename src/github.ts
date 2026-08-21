@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { config } from "./config.js";
+import { isPrCreateRaceError } from "./github_errors.js";
 
 const BASE = "https://api.github.com";
 
@@ -53,8 +54,10 @@ function resolveOwnerRepo(): { owner?: string; repo?: string } {
 
 const token = resolveToken();
 const resolved = resolveOwnerRepo();
-export const owner = resolved.owner;
-export const repo = resolved.repo;
+// `let`, not `const`: ES-module live bindings mean every importer of
+// owner/repo observes the values canonicalizeRepo() adopts at startup (#273).
+export let owner = resolved.owner;
+export let repo = resolved.repo;
 
 if (!token) {
   throw new Error(
@@ -72,8 +75,57 @@ if (!owner || !repo) {
   );
 }
 
+/**
+ * Canonicalize owner/repo against the GitHub API (#273). After a repository
+ * transfer (or rename), path-based REST calls keep working — fetch follows the
+ * 301 — which masks the stale name; but anything embedding the owner OUTSIDE
+ * the URL path, like the `head=owner:branch` PR filter, silently matches
+ * nothing. One GET /repos/{owner}/{repo} at startup adopts GitHub's
+ * `full_name`, so every subsequent call uses the canonical owner/repo.
+ * Best-effort: on any failure the resolved values stay and startup proceeds
+ * (a genuinely wrong repo surfaces on first use anyway).
+ */
+export async function canonicalizeRepo(): Promise<void> {
+  try {
+    const data = await request<{ full_name?: string }>(`/repos/${owner}/${repo}`);
+    const [canonOwner, canonRepo] = (data.full_name ?? "").split("/");
+    if (canonOwner && canonRepo && (canonOwner !== owner || canonRepo !== repo)) {
+      console.warn(
+        `[okffs] Repository resolved as ${owner}/${repo} but GitHub reports ${canonOwner}/${canonRepo} (transferred or renamed) — using the canonical name for this session. Update GITHUB_OWNER/GITHUB_REPO (or the origin remote) to silence this.`
+      );
+      owner = canonOwner;
+      repo = canonRepo;
+    }
+  } catch (err) {
+    console.warn(
+      "[okffs] Could not canonicalize owner/repo at startup:",
+      err instanceof Error ? err.message : err
+    );
+  }
+}
+
+// A hung GitHub fetch otherwise blocks a tool call for minutes before dying as
+// an opaque "fetch failed" (#284). Every request gets a timeout; only reads
+// (GET) are retried once — retrying a failed write could double-apply it
+// (e.g. a duplicate issue comment) when the first attempt actually reached
+// GitHub.
+const FETCH_TIMEOUT_MS = 30_000;
+
+async function timedFetch(url: string, options: RequestInit, retryable: boolean): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetch(url, { ...options, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    } catch (err) {
+      if (retryable && attempt === 0) continue;
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`GitHub request to ${url} failed: ${msg}`);
+    }
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const method = (options.method ?? "GET").toUpperCase();
+  const res = await timedFetch(`${BASE}${path}`, {
     ...options,
     headers: {
       Authorization: `Bearer ${token}`,
@@ -82,7 +134,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       "Content-Type": "application/json",
       ...options.headers,
     },
-  });
+  }, method === "GET");
 
   if (!res.ok) {
     const body = await res.text();
@@ -97,14 +149,15 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export async function graphqlRequest<T>(query: string, variables: Record<string, unknown>): Promise<T> {
-  const res = await fetch(`${BASE}/graphql`, {
+  // GraphQL is always POST, and mutations can't safely be retried — timeout only.
+  const res = await timedFetch(`${BASE}/graphql`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ query, variables }),
-  });
+  }, false);
 
   if (!res.ok) {
     const body = await res.text();
@@ -300,6 +353,41 @@ export async function addIssueComment(issueNumber: number, body: string): Promis
   });
 }
 
+// Marker-based comment upsert (#267): edit the existing comment carrying the
+// hidden HTML-comment marker, or create it if absent — giving callers a single
+// running status comment per issue instead of an append-only thread.
+export async function upsertIssueCommentByMarker(
+  issueNumber: number,
+  marker: string,
+  body: string
+): Promise<{ action: "created" | "updated"; url: string }> {
+  const tag = `<!-- okffs:comment:${marker} -->`;
+  // Page newest-first until the marker is found or comments run out (bounded at
+  // 10 pages / 1000 comments) — scanning only the newest 100 would duplicate the
+  // marker comment on a busy issue once it aged past page 1 (PR #289 review).
+  let existing: { id: number; body: string | null; html_url: string } | undefined;
+  for (let page = 1; page <= 10; page++) {
+    const comments = await request<Array<{ id: number; body: string | null; html_url: string }>>(
+      `/repos/${owner}/${repo}/issues/${issueNumber}/comments?per_page=100&page=${page}&sort=created&direction=desc`
+    );
+    existing = comments.find((c) => c.body?.includes(tag));
+    if (existing || comments.length < 100) break;
+  }
+  const fullBody = `${tag}\n${body}`;
+  if (existing) {
+    const updated = await request<{ html_url: string }>(
+      `/repos/${owner}/${repo}/issues/comments/${existing.id}`,
+      { method: "PATCH", body: JSON.stringify({ body: fullBody }) }
+    );
+    return { action: "updated", url: updated.html_url };
+  }
+  const created = await request<{ html_url: string }>(
+    `/repos/${owner}/${repo}/issues/${issueNumber}/comments`,
+    { method: "POST", body: JSON.stringify({ body: fullBody }) }
+  );
+  return { action: "created", url: created.html_url };
+}
+
 export async function deleteBranch(branchName: string): Promise<void> {
   await request(`/repos/${owner}/${repo}/git/refs/heads/${branchName}`, {
     method: "DELETE",
@@ -325,26 +413,10 @@ export async function getIssueComments(issueNumber: number): Promise<Array<{ bod
 // Centralised here so every PR-open path benefits: create_issue's auto-PR, the
 // allow_empty backfill (create_pull_request / commit_and_update), promote_branch,
 // and fix_into_base — all go through createPullRequest / createDraftPullRequest.
-// Turn a thrown request() error ("GitHub API error 422: {json body}") into a
-// concise, human message — "<status> <github message>" — by extracting GitHub's
-// `message` field from the JSON body instead of dumping the whole raw response.
-// Keeps tool-facing text (e.g. create_issue's auto-PR WARN line) readable (#247
-// review). Falls back to the raw string when it doesn't match the known shape.
-export function summarizeGitHubError(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err);
-  const m = raw.match(/^GitHub (?:API|GraphQL) error (\d+): ([\s\S]*)$/);
-  if (!m) return raw;
-  const [, status, body] = m;
-  try {
-    const parsed = JSON.parse(body);
-    if (parsed && typeof parsed.message === "string" && parsed.message.trim()) {
-      return `${status} ${parsed.message.trim()}`;
-    }
-  } catch {
-    /* body isn't JSON — fall through to the trimmed raw form */
-  }
-  return `${status} ${body}`.trim();
-}
+// The error-summarising and race-detection helpers live in github_errors.ts
+// (pure, import-safe without a configured env, unit-tested — #271); re-exported
+// here so existing importers keep working.
+export { summarizeGitHubError } from "./github_errors.js";
 
 async function withPrCreateRetry<T>(fn: () => Promise<T>, attempts = 4, delayMs = 1500): Promise<T> {
   for (let attempt = 1; ; attempt++) {
@@ -352,10 +424,9 @@ async function withPrCreateRetry<T>(fn: () => Promise<T>, attempts = 4, delayMs 
       return await fn();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      const isIndexingRace = /error 422/.test(msg) && /no commits between/i.test(msg);
-      if (!isIndexingRace || attempt >= attempts) throw err;
+      if (!isPrCreateRaceError(msg) || attempt >= attempts) throw err;
       console.warn(
-        `[okffs] PR creation hit the push→POST indexing race (422 no commits) — retry ${attempt}/${attempts - 1} in ${delayMs}ms.`
+        `[okffs] PR creation hit the push→POST indexing race (422) — retry ${attempt}/${attempts - 1} in ${delayMs}ms.`
       );
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
@@ -492,11 +563,11 @@ export async function createDraftPullRequest(
   );
 }
 
-export function extractBranchFromBody(body: string | null): string | null {
-  if (!body) return null;
-  const match = body.match(/\*\*Branch:\*\*\s+`([^`]+)`/);
-  return match ? match[1] : null;
-}
+// Moved to issue_body.ts (pure, unit-testable — #295); re-exported so existing
+// importers keep working. The extraction is now anchored to a line start, so a
+// body that merely quotes the "**Branch:** `...`" pattern mid-prose no longer
+// shadows the real metadata line.
+export { extractBranchFromBody } from "./issue_body.js";
 
 // ── PR review feedback ──────────────────────────────────────────────────────
 
