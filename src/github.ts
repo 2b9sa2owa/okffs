@@ -273,6 +273,7 @@ export interface PullRequestSummary {
   html_url: string;
   draft: boolean;
   head: { ref: string };
+  base: { ref: string };
 }
 
 export async function listOpenPullRequests(): Promise<PullRequestSummary[]> {

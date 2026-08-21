@@ -6,12 +6,38 @@ import {
   parseRelationships,
   buildBranchName,
   extractBranchFromBody,
+  getPullRequestReview,
   owner,
   repo,
   type IssueRelationships,
+  type PullRequestSummary,
 } from "../github.js";
 import { config } from "../config.js";
 import { getProjectFieldsByIssueNumber, getOrgIssueFieldValuesByNumber } from "../projects.js";
+import { summarizeReviewThreads, renderReviewGateWarning } from "../review_gate.js";
+
+// The open promotion/gate PR (base branch → protected branch), when one exists.
+// Requires both tiers configured — without them there is no gate to look for.
+function findPromotionPr(prs: PullRequestSummary[]): PullRequestSummary | undefined {
+  if (!config.baseBranch || !config.protectedBranch) return undefined;
+  return prs.find((pr) => pr.head.ref === config.baseBranch && pr.base.ref === config.protectedBranch);
+}
+
+// "Release gate" header for the listing: only present when the open gate PR has
+// unresolved review threads, so a clean gate adds no noise (#302). Best-effort.
+async function releaseGateLines(prs: PullRequestSummary[]): Promise<string[]> {
+  const gatePr = findPromotionPr(prs);
+  if (!gatePr) return [];
+  try {
+    const review = await getPullRequestReview(gatePr.number);
+    const warning = renderReviewGateWarning(gatePr.number, summarizeReviewThreads(review.threads));
+    if (!warning) return [];
+    return [`Release gate (${config.baseBranch} → ${config.protectedBranch}): ${gatePr.html_url}`, warning, ""];
+  } catch (err) {
+    console.warn("[okffs] Failed to check the promotion PR's review threads:", err instanceof Error ? err.message : err);
+    return [];
+  }
+}
 
 export const name = "list_issues";
 
@@ -58,9 +84,14 @@ export async function handler(_input: z.infer<typeof inputSchema>) {
     }
   }
 
+  // Pending review feedback on the open promotion PR must surface even when the
+  // issue list is empty — it is exactly the "everything merged, gate waiting"
+  // moment when someone looks here (#302).
+  const gateLines = await releaseGateLines(prs);
+
   if (issues.length === 0) {
     return {
-      content: [{ type: "text" as const, text: "No open issues." }],
+      content: [{ type: "text" as const, text: [...gateLines, "No open issues."].join("\n") }],
     };
   }
 
@@ -142,6 +173,6 @@ export async function handler(_input: z.infer<typeof inputSchema>) {
   });
 
   return {
-    content: [{ type: "text" as const, text: blocks.join("\n\n") }],
+    content: [{ type: "text" as const, text: [...gateLines, blocks.join("\n\n")].join("\n") }],
   };
 }
