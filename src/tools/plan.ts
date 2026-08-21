@@ -44,9 +44,11 @@ const relationshipSchema = z.object({
 const taskSchema = z.object({
   title: z.string().describe("Issue title"),
   // `body` is the canonical name (#282); the per-task `description` alias was
-  // removed in #297. Note the top-level `description` input (the free-text work
-  // description) is a different field and is unaffected.
-  body: z.string().optional().describe("Issue body"),
+  // removed in #297, and `body` is required in the schema so a missing one
+  // fails validation up front (PR #300 review). Note the top-level
+  // `description` input (the free-text work description) is a different field
+  // and is unaffected.
+  body: z.string().describe("Issue body"),
   assignees: z.array(z.string()).optional().describe("GitHub usernames to assign"),
   labels: z.array(z.string()).optional().describe("Labels to apply to this issue"),
   milestone: z.number().int().optional().describe("Milestone number to assign"),

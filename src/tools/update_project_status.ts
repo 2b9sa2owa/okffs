@@ -16,8 +16,9 @@ const STATUSES = ["Backlog", "Ready", "In Progress", "Review"] as const;
 export const inputSchema = z.object({
   // `issue_number` is the canonical name, matching every other issue-taking
   // tool (#278). The `issue` alias shipped in 0.11.0 as a one-release
-  // deprecation and was removed in #297.
-  issue_number: z.number().int().positive().optional().describe("Issue number to move"),
+  // deprecation and was removed in #297; required in the schema so a missing
+  // issue number fails validation up front (PR #300 review).
+  issue_number: z.number().int().positive().describe("Issue number to move"),
   status: z
     .enum(STATUSES)
     .describe('Target column: "Backlog", "Ready", "In Progress", or "Review" (Done is owned by native automation)'),
@@ -27,9 +28,6 @@ const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 
 export async function handler(input: z.infer<typeof inputSchema>) {
   const issueNumber = input.issue_number;
-  if (!issueNumber) {
-    return text("[okffs] update_project_status needs an issue_number (which issue to move). (The old `issue` param was removed in 0.12.0.)");
-  }
 
   if (!config.projectEnabled) {
     return text("OKFFS_PROJECT_ENABLED is not set — project status updates are disabled.");
