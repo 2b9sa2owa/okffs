@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isUntouchedBranch } from "../branch.js";
 import {
   closeIssue,
   getIssue,
@@ -23,14 +24,7 @@ export const inputSchema = z.object({
   issue_number: z.number().int().positive().describe("The issue number to close"),
 });
 
-// A branch is "untouched" when it carries no real work — either no commits ahead
-// of base, or only okffs's empty init commit (create_issue under OKFFS_AUTO_PR
-// pushes `chore: init branch for #N` so the branch diverges enough to open a
-// draft PR). Any other commit means real work, so we must not clean it up.
-const INIT_COMMIT_RE = /^chore: init branch for #\d+/;
-function isUntouchedBranch(commits: Array<{ commit: { message: string } }>): boolean {
-  return commits.every((c) => INIT_COMMIT_RE.test(c.commit.message));
-}
+// isUntouchedBranch lives in branch.ts (pure, unit-testable — #259).
 
 export async function handler(input: z.infer<typeof inputSchema>) {
   const issue = await getIssue(input.issue_number);

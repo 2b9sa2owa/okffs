@@ -19,6 +19,40 @@ export function resolveIssueBody(
   };
 }
 
+export interface IssueRelationships {
+  parent: number[];
+  blockedBy: number[];
+  blocking: number[];
+}
+
+// Parse the "## Relationships" section written by link_issues, e.g.
+//   - Blocked by #3
+//   - Blocking #7
+//   - Parent: #1
+// (Moved here from github.ts in #259 so it's unit-testable.)
+export function parseRelationships(body: string | null): IssueRelationships {
+  const result: IssueRelationships = { parent: [], blockedBy: [], blocking: [] };
+  if (!body) return result;
+
+  const idx = body.indexOf("## Relationships");
+  if (idx === -1) return result;
+
+  let section = body.slice(idx + "## Relationships".length);
+  const nextHeading = section.search(/\n## /);
+  if (nextHeading !== -1) section = section.slice(0, nextHeading);
+
+  for (const line of section.split("\n")) {
+    const m = line.match(/^\s*-\s*(Blocked by|Blocking|Parent:?)\s*#(\d+)/i);
+    if (!m) continue;
+    const num = parseInt(m[2], 10);
+    const label = m[1].toLowerCase();
+    if (label.startsWith("blocked")) result.blockedBy.push(num);
+    else if (label.startsWith("blocking")) result.blocking.push(num);
+    else if (label.startsWith("parent")) result.parent.push(num);
+  }
+  return result;
+}
+
 // ── okffs-owned issue-body metadata (#295) ──────────────────────────────────
 // okffs writes two blocks into issue bodies that callers never author and must
 // not lose on a body rewrite: the "**Branch:** `{name}`" line (create_issue &

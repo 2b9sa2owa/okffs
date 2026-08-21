@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { priorityRank } from "../priority.js";
 import {
   listIssues,
   listOpenPullRequests,
@@ -19,14 +20,7 @@ export const description =
 
 export const inputSchema = z.object({});
 
-// Board Priority order (highest first); unknown named priorities rank between the
-// known set and unset, so custom option names still sort ahead of no priority.
-const PRIORITY_ORDER = ["Urgent", "High", "Medium", "Low"];
-function priorityRank(p?: string): number {
-  if (!p) return 99;
-  const i = PRIORITY_ORDER.indexOf(p);
-  return i === -1 ? 50 : i;
-}
+// priorityRank lives in priority.ts (pure, unit-testable — #259).
 
 export async function handler(_input: z.infer<typeof inputSchema>) {
   const [issues, prs] = await Promise.all([listIssues(), listOpenPullRequests()]);

@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { config } from "./config.js";
 import { isPrCreateRaceError } from "./github_errors.js";
+import { parseOwnerRepo } from "./remote.js";
 
 const BASE = "https://api.github.com";
 
@@ -28,11 +29,7 @@ function resolveToken(): string | null {
   return process.env.GITHUB_TOKEN || tryExec("gh", ["auth", "token"]);
 }
 
-/** Parse owner/repo from a GitHub remote URL (https or ssh form). */
-function parseOwnerRepo(remoteUrl: string): { owner: string; repo: string } | null {
-  const m = remoteUrl.match(/github\.com[:/]([^/]+)\/(.+?)(?:\.git)?$/);
-  return m ? { owner: m[1], repo: m[2] } : null;
-}
+// parseOwnerRepo lives in remote.ts (pure, shared with cli/probe.ts — #259).
 
 /**
  * Resolve owner/repo. Prefers explicit env vars, then auto-detects from the
@@ -171,29 +168,9 @@ export async function graphqlRequest<T>(query: string, variables: Record<string,
   return json.data as T;
 }
 
-export function slugify(title: string): string {
-  return title
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .trim()
-    .split(/\s+/)
-    .slice(0, 5)
-    .join("-");
-}
-
-/**
- * Build the branch name for an issue.
- * Format: {issue-number}-{slug}, or {issue-number}-{identifier}-{slug}
- * when OKFFS_IDENTIFIER is set. The identifier is slugified too, so spaces or
- * other characters invalid in a git ref can't break branch creation.
- */
-export function buildBranchName(issueNumber: number, title: string): string {
-  const slug = slugify(title);
-  const identifier = config.identifier ? slugify(config.identifier) : "";
-  return identifier
-    ? `${issueNumber}-${identifier}-${slug}`
-    : `${issueNumber}-${slug}`;
-}
+// Moved to branch.ts (pure, unit-testable — #259); re-exported so existing
+// importers keep working.
+export { slugify, buildBranchName } from "./branch.js";
 
 export async function createIssue(
   title: string,
@@ -302,38 +279,9 @@ export async function listOpenPullRequests(): Promise<PullRequestSummary[]> {
   return request(`/repos/${owner}/${repo}/pulls?state=open&per_page=100`);
 }
 
-export interface IssueRelationships {
-  parent: number[];
-  blockedBy: number[];
-  blocking: number[];
-}
-
-// Parse the "## Relationships" section written by link_issues, e.g.
-//   - Blocked by #3
-//   - Blocking #7
-//   - Parent: #1
-export function parseRelationships(body: string | null): IssueRelationships {
-  const result: IssueRelationships = { parent: [], blockedBy: [], blocking: [] };
-  if (!body) return result;
-
-  const idx = body.indexOf("## Relationships");
-  if (idx === -1) return result;
-
-  let section = body.slice(idx + "## Relationships".length);
-  const nextHeading = section.search(/\n## /);
-  if (nextHeading !== -1) section = section.slice(0, nextHeading);
-
-  for (const line of section.split("\n")) {
-    const m = line.match(/^\s*-\s*(Blocked by|Blocking|Parent:?)\s*#(\d+)/i);
-    if (!m) continue;
-    const num = parseInt(m[2], 10);
-    const label = m[1].toLowerCase();
-    if (label.startsWith("blocked")) result.blockedBy.push(num);
-    else if (label.startsWith("blocking")) result.blocking.push(num);
-    else if (label.startsWith("parent")) result.parent.push(num);
-  }
-  return result;
-}
+// Moved to issue_body.ts (pure, unit-testable — #259); re-exported so existing
+// importers keep working.
+export { parseRelationships, type IssueRelationships } from "./issue_body.js";
 
 export async function closeIssue(issueNumber: number): Promise<void> {
   await request(`/repos/${owner}/${repo}/issues/${issueNumber}`, {
